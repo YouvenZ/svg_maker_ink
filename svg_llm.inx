@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>AI SVG Generator</name>
+    <id>org.inkscape.ai.svg.generator</id>
+    
+    <param name="tab" type="notebook">
+        <page name="prompt" gui-text="Prompt">
+            <param name="api_key" type="string" gui-text="OpenAI API Key:">sk-...</param>
+            <label>Keep your API key secure. It will not be saved.</label>
+            <spacer/>
+            <param name="prompt" type="string" gui-text="Describe the SVG you want:">A simple red circle</param>
+            <spacer/>
+            <param name="model" type="optiongroup" appearance="combo" gui-text="Model:">
+                <option value="gpt-4">GPT-4 (Best quality)</option>
+                <option value="gpt-4-turbo">GPT-4 Turbo (Fast &amp; quality)</option>
+                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Fast &amp; cheap)</option>
+            </param>
+        </page>
+        
+        <page name="options" gui-text="Options">
+            <param name="size" type="optiongroup" appearance="combo" gui-text="Object size:">
+                <option value="small">Small (200x200)</option>
+                <option value="medium">Medium (400x400)</option>
+                <option value="large">Large (600x600)</option>
+                <option value="custom">Custom</option>
+            </param>
+            
+            <param name="custom_width" type="int" min="50" max="2000" gui-text="Custom width (px):">400</param>
+            <param name="custom_height" type="int" min="50" max="2000" gui-text="Custom height (px):">400</param>
+            
+            <spacer/>
+            
+            <param name="style_hint" type="optiongroup" appearance="combo" gui-text="Style hint:">
+                <option value="none">None (Let AI decide)</option>
+                <option value="minimal">Minimal/Clean</option>
+                <option value="detailed">Detailed</option>
+                <option value="flat">Flat design</option>
+                <option value="outline">Outline/Stroke only</option>
+                <option value="filled">Filled shapes</option>
+                <option value="geometric">Geometric</option>
+                <option value="organic">Organic/Natural</option>
+            </param>
+            
+            <param name="color_scheme" type="optiongroup" appearance="combo" gui-text="Color scheme:">
+                <option value="any">Any colors</option>
+                <option value="monochrome">Monochrome</option>
+                <option value="warm">Warm colors</option>
+                <option value="cool">Cool colors</option>
+                <option value="pastel">Pastel</option>
+                <option value="vibrant">Vibrant</option>
+                <option value="grayscale">Grayscale</option>
+            </param>
+        </page>
+        
+        <page name="advanced" gui-text="Advanced">
+            <param name="temperature" type="float" min="0.0" max="2.0" precision="1" gui-text="Creativity (temperature):">0.7</param>
+            <label>Higher = more creative, Lower = more focused</label>
+            <spacer/>
+            
+            <param name="add_group" type="bool" gui-text="Wrap in group">true</param>
+            <label>Group the generated SVG elements together</label>
+            <spacer/>
+            
+            <param name="max_tokens" type="int" min="500" max="4000" gui-text="Max tokens:">2000</param>
+            <label>Maximum length of response</label>
+        </page>
+        
+        <page name="help" gui-text="Help">
+            <label>How to use:</label>
+            <label>1. Get an API key from OpenAI (https://platform.openai.com)</label>
+            <label>2. Enter your API key in the Prompt tab</label>
+            <label>3. Describe what you want to create</label>
+            <label>4. Adjust options and click Apply</label>
+            <spacer/>
+            <label>Examples:</label>
+            <label>- A simple house icon</label>
+            <label>- Three interconnected circles forming a logo</label>
+            <label>- A tree with leaves</label>
+            <label>- An abstract pattern with triangles</label>
+            <spacer/>
+            <label>Note: API usage costs apply based on OpenAI pricing</label>
+        </page>
+    </param>
+    
+    <effect>
+        <object-type>all</object-type>
+        <effects-menu>
+            <submenu name="Generate"/>
+        </effects-menu>
+    </effect>
+    
+    <script>
+        <command location="inx" interpreter="python">svg_llm.py</command>
+    </script>
+</inkscape-extension>
