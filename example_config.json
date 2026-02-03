@@ -1,0 +1,10 @@
+{
+    "openai_api_key": "sk-proj-skopenai-api-key-here",
+    "stability_api_key": "sk-your-stability-api-key-here",
+    "replicate_api_key": "r8_your-replicate-token-here",
+    "default_provider": "openai",
+    "default_model": "dall-e-3",
+    "default_size": "1024x1024",
+    "default_quality": "standard",
+    "default_save_directory": "C:\\Users\\youve\\Pictures\\AI_Images"
+}

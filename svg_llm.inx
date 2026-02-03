@@ -4,81 +4,216 @@
     <id>org.inkscape.ai.svg.generator</id>
     
     <param name="tab" type="notebook">
+        <!-- ==================== PROMPT TAB ==================== -->
         <page name="prompt" gui-text="Prompt">
-            <param name="api_key" type="string" gui-text="OpenAI API Key:">sk-...</param>
-            <label>Keep your API key secure. It will not be saved.</label>
-            <spacer/>
-            <param name="prompt" type="string" gui-text="Describe the SVG you want:">A simple red circle</param>
-            <spacer/>
-            <param name="model" type="optiongroup" appearance="combo" gui-text="Model:">
-                <option value="gpt-4">GPT-4 (Best quality)</option>
-                <option value="gpt-4-turbo">GPT-4 Turbo (Fast &amp; quality)</option>
-                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Fast &amp; cheap)</option>
+            <label appearance="header">AI Provider</label>
+            <param name="provider" type="optiongroup" appearance="combo" gui-text="Provider:">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="google">Google Gemini</option>
+                <option value="ollama">Ollama (Local)</option>
             </param>
+            
+            <param name="api_key" type="string" gui-text="API Key:">sk-...</param>
+            <param name="save_api_key" type="bool" gui-text="Save API key for future use">false</param>
+            
+            <param name="api_endpoint" type="string" gui-text="Custom endpoint (Ollama):">http://localhost:11434</param>
+            
+            <spacer/>
+            <label appearance="header">Prompt</label>
+            
+            <param name="prompt_preset" type="optiongroup" appearance="combo" gui-text="Preset:">
+                <option value="none">None</option>
+                <option value="icon">Icon</option>
+                <option value="illustration">Illustration</option>
+                <option value="diagram">Diagram</option>
+                <option value="pattern">Pattern</option>
+                <option value="logo">Logo</option>
+                <option value="flowchart">Flowchart</option>
+                <option value="infographic">Infographic</option>
+            </param>
+            
+            <param name="prompt" type="string" appearance="multiline" gui-text="Describe the SVG:">A simple red circle</param>
+            
+            <param name="use_selection_context" type="bool" gui-text="Use selected elements as context">false</param>
         </page>
         
-        <page name="options" gui-text="Options">
-            <param name="size" type="optiongroup" appearance="combo" gui-text="Object size:">
-                <option value="small">Small (200x200)</option>
-                <option value="medium">Medium (400x400)</option>
-                <option value="large">Large (600x600)</option>
+        <!-- ==================== MODEL TAB ==================== -->
+        <page name="model" gui-text="Model">
+            <label appearance="header">Model Selection</label>
+            <param name="model" type="optiongroup" appearance="combo" gui-text="Model:">
+                <option value="gpt-4-turbo">GPT-4 Turbo (OpenAI)</option>
+                <option value="gpt-4o">GPT-4o (OpenAI)</option>
+                <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
+                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (OpenAI)</option>
+                <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Anthropic)</option>
+                <option value="claude-3-opus-20240229">Claude 3 Opus (Anthropic)</option>
+                <option value="claude-3-haiku-20240307">Claude 3 Haiku (Anthropic)</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Google)</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Google)</option>
+                <option value="llama3.1">Llama 3.1 (Ollama)</option>
+                <option value="codellama">CodeLlama (Ollama)</option>
+                <option value="mistral">Mistral (Ollama)</option>
+            </param>
+            
+            <spacer/>
+            <label appearance="header">Generation Settings</label>
+            
+            <param name="temperature" type="float" min="0.0" max="2.0" precision="1" gui-text="Creativity (temperature):">0.7</param>
+            <label>Higher = more creative, Lower = more focused</label>
+            
+            <param name="max_tokens" type="int" min="500" max="8000" gui-text="Max tokens:">4000</param>
+            
+            <param name="timeout" type="int" min="30" max="300" gui-text="Timeout (seconds):">60</param>
+            
+            <param name="retry_count" type="int" min="0" max="5" gui-text="Retry on failure:">2</param>
+            
+            <param name="seed" type="int" min="-1" max="999999" gui-text="Seed (-1 = random):">-1</param>
+        </page>
+        
+        <!-- ==================== SIZE TAB ==================== -->
+        <page name="size" gui-text="Size">
+            <label appearance="header">Dimensions</label>
+            
+            <param name="size" type="optiongroup" appearance="combo" gui-text="Size preset:">
+                <option value="small">Small (200px base)</option>
+                <option value="medium">Medium (400px base)</option>
+                <option value="large">Large (600px base)</option>
+                <option value="xlarge">Extra Large (800px base)</option>
                 <option value="custom">Custom</option>
             </param>
             
-            <param name="custom_width" type="int" min="50" max="2000" gui-text="Custom width (px):">400</param>
-            <param name="custom_height" type="int" min="50" max="2000" gui-text="Custom height (px):">400</param>
+            <param name="aspect_ratio" type="optiongroup" appearance="combo" gui-text="Aspect ratio:">
+                <option value="square">Square (1:1)</option>
+                <option value="landscape">Landscape (4:3)</option>
+                <option value="portrait">Portrait (3:4)</option>
+                <option value="widescreen">Widescreen (16:9)</option>
+                <option value="banner">Banner (3:1)</option>
+                <option value="icon">Icon (1:1)</option>
+            </param>
             
             <spacer/>
+            <label appearance="header">Custom Size</label>
+            <param name="custom_width" type="int" min="50" max="4000" gui-text="Width (px):">400</param>
+            <param name="custom_height" type="int" min="50" max="4000" gui-text="Height (px):">400</param>
+        </page>
+        
+        <!-- ==================== STYLE TAB ==================== -->
+        <page name="style" gui-text="Style">
+            <label appearance="header">Visual Style</label>
             
-            <param name="style_hint" type="optiongroup" appearance="combo" gui-text="Style hint:">
+            <param name="style_hint" type="optiongroup" appearance="combo" gui-text="Style:">
                 <option value="none">None (Let AI decide)</option>
                 <option value="minimal">Minimal/Clean</option>
                 <option value="detailed">Detailed</option>
-                <option value="flat">Flat design</option>
-                <option value="outline">Outline/Stroke only</option>
-                <option value="filled">Filled shapes</option>
+                <option value="flat">Flat Design</option>
+                <option value="outline">Outline/Line Art</option>
+                <option value="filled">Filled Shapes</option>
                 <option value="geometric">Geometric</option>
                 <option value="organic">Organic/Natural</option>
+                <option value="hand_drawn">Hand Drawn/Sketchy</option>
+                <option value="isometric">Isometric 3D</option>
+                <option value="cartoon">Cartoon/Comic</option>
             </param>
             
+            <param name="complexity" type="optiongroup" appearance="combo" gui-text="Complexity:">
+                <option value="simple">Simple (10-15 elements)</option>
+                <option value="medium">Medium (20-40 elements)</option>
+                <option value="complex">Complex (many elements)</option>
+            </param>
+            
+            <spacer/>
+            <label appearance="header">Colors</label>
+            
             <param name="color_scheme" type="optiongroup" appearance="combo" gui-text="Color scheme:">
-                <option value="any">Any colors</option>
+                <option value="any">Any Colors</option>
                 <option value="monochrome">Monochrome</option>
-                <option value="warm">Warm colors</option>
-                <option value="cool">Cool colors</option>
+                <option value="warm">Warm Colors</option>
+                <option value="cool">Cool Colors</option>
                 <option value="pastel">Pastel</option>
                 <option value="vibrant">Vibrant</option>
                 <option value="grayscale">Grayscale</option>
+                <option value="earth">Earth Tones</option>
+                <option value="neon">Neon</option>
+                <option value="complementary">Complementary</option>
             </param>
+            
+            <param name="stroke_style" type="optiongroup" appearance="combo" gui-text="Stroke style:">
+                <option value="any">Any</option>
+                <option value="thin">Thin (1-2px)</option>
+                <option value="medium">Medium (2-4px)</option>
+                <option value="thick">Thick (4-8px)</option>
+                <option value="none">No Strokes</option>
+                <option value="variable">Variable Width</option>
+            </param>
+            
+            <param name="include_gradients" type="bool" gui-text="Allow gradients">true</param>
         </page>
         
-        <page name="advanced" gui-text="Advanced">
-            <param name="temperature" type="float" min="0.0" max="2.0" precision="1" gui-text="Creativity (temperature):">0.7</param>
-            <label>Higher = more creative, Lower = more focused</label>
+        <!-- ==================== OUTPUT TAB ==================== -->
+        <page name="output" gui-text="Output">
+            <label appearance="header">Placement</label>
+            
+            <param name="position" type="optiongroup" appearance="combo" gui-text="Position:">
+                <option value="center">Center of Document</option>
+                <option value="origin">Origin (0,0)</option>
+                <option value="selection">Next to Selection</option>
+            </param>
+            
             <spacer/>
+            <label appearance="header">Grouping</label>
             
             <param name="add_group" type="bool" gui-text="Wrap in group">true</param>
-            <label>Group the generated SVG elements together</label>
-            <spacer/>
+            <param name="group_name" type="string" gui-text="Group name (optional):"></param>
             
-            <param name="max_tokens" type="int" min="500" max="4000" gui-text="Max tokens:">2000</param>
-            <label>Maximum length of response</label>
+            <spacer/>
+            <label appearance="header">Variations</label>
+            
+            <param name="variations" type="int" min="1" max="4" gui-text="Number of variations:">1</param>
+            <label>Generate multiple interpretations side by side</label>
+            
+            <spacer/>
+            <label appearance="header">Additional Options</label>
+            
+            <param name="include_animations" type="bool" gui-text="Include animations">false</param>
+            <param name="add_accessibility" type="bool" gui-text="Add accessibility (title/desc)">false</param>
+            <param name="optimize_paths" type="bool" gui-text="Request optimized paths">true</param>
+            <param name="save_to_history" type="bool" gui-text="Save prompt to history">true</param>
         </page>
         
+        <!-- ==================== HELP TAB ==================== -->
         <page name="help" gui-text="Help">
-            <label>How to use:</label>
-            <label>1. Get an API key from OpenAI (https://platform.openai.com)</label>
-            <label>2. Enter your API key in the Prompt tab</label>
+            <label appearance="header">Getting Started</label>
+            <label>1. Choose a provider (OpenAI, Anthropic, Google, or Ollama)</label>
+            <label>2. Enter your API key (not needed for Ollama)</label>
             <label>3. Describe what you want to create</label>
-            <label>4. Adjust options and click Apply</label>
+            <label>4. Adjust style and options as needed</label>
+            <label>5. Click Apply</label>
+            
             <spacer/>
-            <label>Examples:</label>
-            <label>- A simple house icon</label>
-            <label>- Three interconnected circles forming a logo</label>
-            <label>- A tree with leaves</label>
-            <label>- An abstract pattern with triangles</label>
+            <label appearance="header">API Keys</label>
+            <label>• OpenAI: https://platform.openai.com/api-keys</label>
+            <label>• Anthropic: https://console.anthropic.com/</label>
+            <label>• Google: https://aistudio.google.com/apikey</label>
+            <label>• Ollama: No key needed (local)</label>
+            
             <spacer/>
-            <label>Note: API usage costs apply based on OpenAI pricing</label>
+            <label appearance="header">Example Prompts</label>
+            <label>• A simple house icon with a chimney</label>
+            <label>• Three interconnected circles forming a logo</label>
+            <label>• A tree with detailed leaves and branches</label>
+            <label>• An abstract geometric pattern with triangles</label>
+            <label>• A flowchart showing a login process</label>
+            
+            <spacer/>
+            <label appearance="header">Tips</label>
+            <label>• Use presets for better results</label>
+            <label>• Select elements first to match their style</label>
+            <label>• Lower temperature for predictable results</label>
+            <label>• Check "Save API key" to avoid re-entering</label>
+            
+            <spacer/>
+            <label>Note: API usage costs apply (except Ollama)</label>
         </page>
     </param>
     
