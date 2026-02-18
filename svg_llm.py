@@ -18,10 +18,51 @@ from datetime import datetime
 class SVGLLMGenerator(inkex.EffectExtension):
     """Extension to generate SVG using various LLM providers."""
     
-    CONFIG_FILENAME = '.config.json'
-    HISTORY_FILENAME = '.svg_llm_history.json'
+    CONFIG_FILENAME = 'config.json'
+    HISTORY_FILENAME = 'svg_llm_history.json'
     MAX_HISTORY = 50
     
+    PROVIDERS = {
+        'openai': {
+            'name': 'OpenAI DALL-E',
+            'generate_url': 'https://api.openai.com/v1/images/generations',
+            'edit_url': 'https://api.openai.com/v1/images/edits',
+            'variation_url': 'https://api.openai.com/v1/images/variations',
+            'env_key': 'OPENAI_API_KEY',
+            'config_key': 'openai_api_key',
+            'models': ['dall-e-3', 'dall-e-2', 'gpt-image-1'],
+            'sizes': ['1024x1024', '1024x1792', '1792x1024', '512x512', '256x256']
+        },
+        'stability': {
+            'name': 'Stability AI',
+            'generate_url': 'https://api.stability.ai/v1/generation/{engine}/text-to-image',
+            'img2img_url': 'https://api.stability.ai/v1/generation/{engine}/image-to-image',
+            'env_key': 'STABILITY_API_KEY',
+            'config_key': 'stability_api_key',
+            'models': ['stable-diffusion-xl-1024-v1-0', 'stable-diffusion-v1-6', 'stable-diffusion-xl-beta-v2-2-2'],
+            'sizes': ['1024x1024', '1152x896', '896x1152', '1216x832', '832x1216', '512x512']
+        },
+        'replicate': {
+            'name': 'Replicate',
+            'generate_url': 'https://api.replicate.com/v1/predictions',
+            'env_key': 'REPLICATE_API_TOKEN',
+            'config_key': 'replicate_api_key',
+            'models': ['stability-ai/sdxl', 'black-forest-labs/flux-schnell', 'black-forest-labs/flux-pro'],
+            'sizes': ['1024x1024', '1024x768', '768x1024', '512x512']
+        },
+        'local': {
+            'name': 'Local (Automatic1111/ComfyUI)',
+            'generate_url': 'http://127.0.0.1:7860/sdapi/v1/txt2img',
+            'img2img_url': 'http://127.0.0.1:7860/sdapi/v1/img2img',
+            'env_key': '',
+            'config_key': '',
+            'models': ['default'],
+            'sizes': ['1024x1024', '768x768', '512x512', '768x512', '512x768']
+        }
+    }
+
+
+
     def __init__(self):
         super().__init__()
         self.config_path = os.path.join(os.path.dirname(__file__), self.CONFIG_FILENAME)
@@ -90,23 +131,47 @@ class SVGLLMGenerator(inkex.EffectExtension):
             help="Random seed (-1 for random)")
         pars.add_argument("--save_to_history", type=inkex.Boolean, default=True,
             help="Save prompt to history")
+        
+
+
+        pars.add_argument("--save_to_disk", type=inkex.Boolean, default=True, help="Save to disk")
+        pars.add_argument("--save_directory", type=str, default="", help="Save directory")
+        pars.add_argument("--filename_prefix", type=str, default="ai_image", help="Filename prefix")
+        pars.add_argument("--embed_in_svg", type=inkex.Boolean, default=True, help="Embed in SVG")
+        pars.add_argument("--use_env_key", type=inkex.Boolean, default=True, help="Use of Env file")
+        pars.add_argument("--use_config_key", type=inkex.Boolean, default=True, help="Use of configurated key")
+
+
+
     
+
+
     def effect(self):
         """Main effect function."""
         # Load config and potentially saved API key
-        config = self.load_config()
+        self.config = self.load_config()
         
-        # Get API key (from argument or saved config)
-        api_key = self.options.api_key
-        if (not api_key or api_key == "sk-...") and self.options.provider in config.get('api_keys', {}):
-            api_key = config['api_keys'][self.options.provider]
+        inkex.errormsg(self.config)
+
+         
+
+        # # Get API key (from argument or saved config)
+        # api_key = self.options.api_key
+        # if (not api_key or api_key == "sk-...") and self.options.provider in config.get('api_keys', {}):
+        #     api_key = config['api_keys'][self.options.provider]
         
-        # Validate API key (not needed for local Ollama)
-        if self.options.provider != "ollama":
-            if not api_key or api_key.startswith("sk-..."):
-                inkex.errormsg(f"Please provide a valid API key for {self.options.provider}.")
-                return
+        # # Validate API key (not needed for local Ollama)
+        # if self.options.provider != "ollama":
+        #     if not api_key or api_key.startswith("sk-..."):
+        #         inkex.errormsg(f"Please provide a valid API key for {self.options.provider}.")
+        #         return
         
+
+        api_key = self.get_api_key()
+
+        inkex.errormsg("api key:"+api_key)
+
+
         # Save API key if requested
         if self.options.save_api_key and api_key:
             self.save_api_key(api_key)
@@ -155,6 +220,99 @@ class SVGLLMGenerator(inkex.EffectExtension):
     
     # ==================== Configuration Management ====================
     
+    def get_save_directory(self):
+        """Get save directory from options or config."""
+        if self.options.save_directory and self.options.save_directory.strip():
+            return self.options.save_directory
+        return self.get_config_value('default_save_directory', os.path.expanduser('~/Pictures/AI_Images'))
+    
+
+
+
+
+    
+    def get_api_key(self):
+            """
+            Get API key with priority:
+            1. Direct input (if provided and not placeholder)
+            2. Environment variable (if use_env_key is True)
+            3. Config file (if use_config_key is True)
+            """
+            provider = self.options.provider
+            
+
+            inkex.errormsg(f"Provider {provider}")
+
+            # Skip API key for local provider
+            if provider == 'local':
+                return ''
+
+            inkex.errormsg(f"Option api ::  {self.options.use_env_key} -- {self.options.api_key} -- {self.options.use_config_key}")
+
+
+
+            # 1. Check direct input first
+            if self.options.api_key and self.options.api_key not in ['', 'sk-...', 'sk-your-key-here']:
+                # Save to config if requested
+                if self.options.save_api_key:
+                    config_key = self.PROVIDERS.get(provider, {}).get('config_key', '')
+                    if config_key:
+                        self.set_config_value(config_key, self.options.api_key)
+                return self.options.api_key
+            
+            # 2. Check environment variable
+            if self.options.use_env_key:
+                env_key = self.PROVIDERS.get(provider, {}).get('env_key', '')
+                inkex.errormsg(f"env_key ::  {env_key}")
+
+                if env_key:
+                    inkex.errormsg(f"env_key ::  {env_key}")
+                    env_value = os.environ.get(env_key, '')
+                    inkex.errormsg(f"env_value ::  {env_value}")
+                    if env_value:
+                        return env_value
+            
+            # 3. Check config file
+            if self.options.use_config_key:
+                config_key = self.PROVIDERS.get(provider, {}).get('config_key', '')
+                if config_key:
+                    config_value = self.config.get(config_key, '')
+                    if config_value and config_value not in ['sk-your-key-here', 'r8_your-token-here']:
+                        return config_value
+            
+            return ''
+    
+
+
+
+    def save_svg_to_disk(self, image_data):
+        """Save image data to disk."""
+        if not self.options.save_to_disk:
+            return None
+        save_dir = self.get_save_directory()
+        
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+        except:
+            inkex.errormsg(f"Could not create directory: {save_dir}")
+            return None
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        seed_str = f"_seed{self.options.seed}" if self.options.seed != -1 else ""
+        filename = f"{self.options.filename_prefix}_{timestamp}{seed_str}.svg"
+        filepath = os.path.join(save_dir, filename)
+        
+        try:
+            with open(filepath, 'w') as f:
+                f.write(image_data)
+            return filepath
+        except Exception as e:
+            inkex.errormsg(f"Error saving image: {str(e)}")
+            return None
+
+
+
+
     def load_config(self):
         """Load saved configuration."""
         if os.path.exists(self.config_path):
@@ -618,6 +776,10 @@ class SVGLLMGenerator(inkex.EffectExtension):
         if not svg_code:
             raise Exception("No response from API")
         
+        if self.options.save_to_disk:
+            self.save_svg_to_disk(svg_code)
+
+
         return self.clean_svg_response(svg_code)
     
     # ==================== SVG Processing ====================

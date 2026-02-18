@@ -15,6 +15,12 @@
             </param>
             
             <param name="api_key" type="string" gui-text="API Key:">sk-...</param>
+            <param name="use_env_key" type="bool" gui-text="Use environment variable instead">true</param>
+            <param name="use_config_key" type="bool" gui-text="Use config key">true</param>
+
+            
+            <label>Environment variables: OPENAI_API_KEY, STABILITY_API_KEY, REPLICATE_API_TOKEN</label>
+            <spacer/>
             <param name="save_api_key" type="bool" gui-text="Save API key for future use">false</param>
             
             <param name="api_endpoint" type="string" gui-text="Custom endpoint (Ollama):">http://localhost:11434</param>
@@ -181,6 +187,25 @@
             <param name="save_to_history" type="bool" gui-text="Save prompt to history">true</param>
         </page>
         
+
+        <!-- Save Options Tab -->
+        <page name="save" gui-text="Save">
+            <label appearance="header">Save to Disk:</label>
+            <param name="save_to_disk" type="bool" gui-text="Save image to disk">true</param>
+            
+            <param name="save_directory" type="string" gui-text="Save directory:">C:\Users\youve\Pictures\SVG_Images</param>
+            
+            <param name="filename_prefix" type="string" gui-text="Filename prefix:">svg_image</param>
+            <label>Files saved as: prefix_timestamp_seed.svg</label>
+            <spacer/>
+            
+            <label appearance="header">SVG Embedding:</label>
+            <param name="embed_in_svg" type="bool" gui-text="Embed image in SVG">true</param>
+            <label>✓ Embedded: Self-contained but larger file</label>
+            <label>✗ Linked: Smaller file but needs external image</label>
+        </page>
+
+
         <!-- ==================== HELP TAB ==================== -->
         <page name="help" gui-text="Help">
             <label appearance="header">Getting Started</label>
