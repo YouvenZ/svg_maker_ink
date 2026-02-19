@@ -151,26 +151,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         # Load config and potentially saved API key
         self.config = self.load_config()
         
-        inkex.errormsg(self.config)
-
-         
-
-        # # Get API key (from argument or saved config)
-        # api_key = self.options.api_key
-        # if (not api_key or api_key == "sk-...") and self.options.provider in config.get('api_keys', {}):
-        #     api_key = config['api_keys'][self.options.provider]
-        
-        # # Validate API key (not needed for local Ollama)
-        # if self.options.provider != "ollama":
-        #     if not api_key or api_key.startswith("sk-..."):
-        #         inkex.errormsg(f"Please provide a valid API key for {self.options.provider}.")
-        #         return
-        
-
         api_key = self.get_api_key()
-
-        inkex.errormsg("api key:"+api_key)
-
 
         # Save API key if requested
         if self.options.save_api_key and api_key:
@@ -239,17 +220,11 @@ class SVGLLMGenerator(inkex.EffectExtension):
             3. Config file (if use_config_key is True)
             """
             provider = self.options.provider
-            
 
-            inkex.errormsg(f"Provider {provider}")
 
             # Skip API key for local provider
             if provider == 'local':
                 return ''
-
-            inkex.errormsg(f"Option api ::  {self.options.use_env_key} -- {self.options.api_key} -- {self.options.use_config_key}")
-
-
 
             # 1. Check direct input first
             if self.options.api_key and self.options.api_key not in ['', 'sk-...', 'sk-your-key-here']:
