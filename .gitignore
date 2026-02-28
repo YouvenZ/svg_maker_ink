@@ -1,5 +1,6 @@
 config.json
 svg_llm_history.json
+svg_maker.log
 
 # Python temporary files
 __pycache__/

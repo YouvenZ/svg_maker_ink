@@ -32,6 +32,11 @@ except (ImportError, ValueError):
     except:
         GTK_UI_AVAILABLE = False
 
+import sys
+# Redirect all stderr to a log file to suppress Inkscape's annoying log dialog and GTK warnings
+log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'svg_maker.log')
+log_file = open(log_path, 'w')
+os.dup2(log_file.fileno(), sys.stderr.fileno())
 
 class SVGLLMGenerator(inkex.EffectExtension):
     """Extension to generate SVG using various LLM providers."""
