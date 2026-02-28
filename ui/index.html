@@ -75,15 +75,19 @@
                 </div>
                 <!-- Profiles Sub-Menu -->
                 <div class="form-group hidden" id="profile-group">
-                    <label for="profile_select">Profile</label>
-                    <div class="grid" style="grid-template-columns: 1fr auto;">
-                        <select id="profile_select">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <label for="profile_select" style="margin-bottom: 0;">Profile</label>
+                        <button type="button" id="add-profile-btn"
+                            style="padding: 4px 12px; font-size: 11px; font-weight: 500; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 4px; color: white; cursor: pointer; transition: all 0.2s ease;">+
+                            Add New</button>
+                    </div>
+                    <div class="grid" style="grid-template-columns: 1fr auto; gap: 0;">
+                        <select id="profile_select" style="border-radius: 8px 0 0 8px;">
                             <!-- Populated dynamically -->
                         </select>
-                        <button type="button" id="add-profile-btn"
-                            style="padding: 0 15px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px 0 0 8px; color: white; cursor: pointer; border-right: none;">Add</button>
                         <button type="button" id="del-profile-btn"
-                            style="padding: 0 15px; background: rgba(255,0,0,0.1); border: 1px solid var(--border-color); border-radius: 0 8px 8px 0; color: #ff6b6b; cursor: pointer;">Del</button>
+                            style="padding: 0 15px; background: rgba(255,0,0,0.1); border: 1px solid var(--border-color); border-left: none; border-radius: 0 8px 8px 0; color: #ff6b6b; cursor: pointer; font-weight: 500; transition: all 0.2s ease;">Del</button>
                     </div>
                 </div>
                 <div class="form-group">
