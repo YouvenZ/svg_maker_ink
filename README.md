@@ -29,10 +29,18 @@ A powerful Inkscape extension that leverages multiple AI providers (OpenAI, Anth
 ## ✨ Features
 
 - **🤖 Multiple AI Providers**
-  - **OpenAI**: GPT-4, GPT-4 Turbo, GPT-3.5
+  - **OpenAI**: GPT-4, GPT-4o, GPT-3.5
   - **Anthropic**: Claude 3.5 Sonnet, Claude 3 Opus
   - **Google**: Gemini 1.5 Flash, Gemini 1.5 Pro
   - **Ollama**: Local models (Llama, Mistral, etc.)
+  - **OpenAI Compatible**: Any service offering an OpenAI-compatible endpoint (LM Studio, LocalAI, vLLM, etc.)
+
+- **💻 Native Web UI**
+  - Modern, dark-mode GTK/WebKit interface
+  - Asynchronous generation (Inkscape stays responsive)
+  - Rapid model syncing capabilities
+  - Real-time progress tracking
+
 
 - **🎨 Rich Style Options**
   - Style presets (minimal, detailed, flat, outline, geometric, etc.)
@@ -95,10 +103,11 @@ A powerful Inkscape extension that leverages multiple AI providers (OpenAI, Anth
    mkdir -p [extensions-directory]/svg_maker
    ```
 
-2. **Copy files:**
+2. **Copy files & folders:**
    ```bash
    cp svg_llm.py [extensions-directory]/svg_maker/
    cp svg_llm.inx [extensions-directory]/svg_maker/
+   cp -r ui/ [extensions-directory]/svg_maker/
    ```
 
 3. **Restart Inkscape**
@@ -132,21 +141,18 @@ A powerful Inkscape extension that leverages multiple AI providers (OpenAI, Anth
 
 | Tab | Purpose |
 |-----|---------|
-| **Provider** | Select AI provider and enter API key |
-| **Prompt** | Enter description and select presets |
-| **Style** | Configure visual style and colors |
-| **Size** | Set dimensions and aspect ratio |
-| **Output** | Grouping, positioning, variations |
-| **Advanced** | Temperature, tokens, retries, seed |
-| **Help** | Quick reference and tips |
+| **Generator** | Enter prompt, select preset, and choose selection context (Center, Origin, or Next to Select) |
+| **Setup & Model** | Manage provider, API keys, endpoints, and sync models |
+| **Layout & Style** | Fine-tune dimensions, aspect ratios, variations, creativity, and visual styles |
+| **History** | Browse, search, reuse, and clear your past generated prompts |
 
 ### Prompt Tab Options
 
 | Option | Description |
 |--------|-------------|
 | **Prompt** | Text description of desired SVG |
-| **Preset** | Quick templates (icon, logo, diagram, etc.) |
-| **Use Selection Context** | Match style of selected elements |
+| **Preset** | Quick templates (icon, logo, diagram, pattern, etc.) |
+| **Use Selected Element** | Pass your current selection's properties as context |
 
 ### Style Tab Options
 
@@ -161,9 +167,10 @@ A powerful Inkscape extension that leverages multiple AI providers (OpenAI, Anth
 
 | Option | Values |
 |--------|--------|
-| **Size** | small (200px), medium (400px), large (600px), xlarge (800px), custom |
+| **Size Preset** | small (200px), medium (400px), large (600px), custom |
 | **Aspect Ratio** | square, landscape (4:3), portrait (3:4), widescreen (16:9), banner (3:1) |
-| **Custom Width/Height** | Any pixel value |
+| **Custom Size** | Any pixel value |
+| **Creativity (Temperature)** | Slider from Focused (0.0) to Creative (1.0) |
 
 ### Output Tab Options
 
@@ -183,34 +190,16 @@ A powerful Inkscape extension that leverages multiple AI providers (OpenAI, Anth
 
 ### API Key Management
 
-Three ways to provide API keys (in priority order):
+API keys and settings are securely managed and stored entirely behind the scenes via the Web UI:
 
-#### 1. Direct Input (Temporary)
-Enter key directly in the Provider tab each time.
-
-#### 2. Save for Future Use (Recommended)
-1. Enter API key in Provider tab
-2. Check **"Save API key"**
-3. Key is stored in `.config.json`
-
-#### 3. Config File (Manual)
-
-Edit `.config.json` in the extension directory:
-
-```json
-{
-    "api_keys": {
-        "openai": "sk-your-openai-key",
-        "anthropic": "sk-ant-your-anthropic-key",
-        "google": "your-google-api-key"
-    },
-    "last_provider": "openai"
-}
-```
+1. Open the **Setup & Model** tab.
+2. Enter your API key for the selected provider.
+3. Click **Save Configuration**.
+4. The data is saved locally to a `config.json` file in tracking the extension folder.
 
 ### Prompt History
 
-The extension automatically saves your prompts to `.svg_llm_history.json`:
+The extension automatically saves your prompts to `svg_llm_history.json`:
 
 ```json
 [
@@ -261,7 +250,14 @@ The extension automatically saves your prompts to `.svg_llm_history.json`:
    ollama serve
    ```
 4. Select provider: **ollama**
-5. No API key needed!
+5. Hit the **Sync** button to fetch installed models.
+
+### OpenAI Compatible (LM Studio / LocalAI / vLLM)
+
+1. Start your local inference server.
+2. Select provider: **openai_compatible**.
+3. Set Custom Endpoint (e.g., `http://localhost:1234/v1`).
+4. Hit **Sync** or manually type your model into the *Manual Model Name* field.
 
 ---
 
@@ -273,8 +269,8 @@ Edit the class constants in svg_llm.py:
 
 ```python
 class SVGLLMGenerator(inkex.EffectExtension):
-    CONFIG_FILENAME = '.config.json'      # Config file name
-    HISTORY_FILENAME = '.svg_llm_history.json'  # History file name
+    CONFIG_FILENAME = 'config.json'      # Config file name
+    HISTORY_FILENAME = 'svg_llm_history.json'  # History file name
     MAX_HISTORY = 50                       # Max history entries
 ```
 
@@ -432,12 +428,16 @@ def call_openai_api(self, prompt, api_key):
 
 ```
 svg_maker/
-├── svg_llm.py              # Main extension code
+├── svg_llm.py              # Main extension code (Python backend)
 ├── svg_llm.inx             # Inkscape extension definition
+├── ui/                     # Native Web UI frontend
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
 ├── README.md               # This file
 ├── LICENSE                 # MIT License
-├── .config.json            # Saved API keys (auto-created)
-└── .svg_llm_history.json   # Prompt history (auto-created)
+├── config.json             # Saved configuration (auto-created)
+└── svg_llm_history.json    # Prompt history (auto-created)
 ```
 
 ---
@@ -510,6 +510,14 @@ This project is licensed under the MIT License - see LICENSE file for details.
 ---
 
 ## 🔄 Changelog
+
+### v2.0.0 (Latest)
+- 🚀 **Total Overhaul:** Replaced basic Inkscape dialogs with a stunning Native GTK Web UI
+- ⚡ **Asynchronous Generation:** Keeps Inkscape totally responsive during API processing
+- 🤖 **New Provider:** Added generic "OpenAI Compatible" provider support (LM Studio, LocalAI)
+- 💾 **Smart Persistence:** Settings are securely auto-saved instantly on tab changes
+- 🔍 **Enhanced History:** New dedicated History UI tab with dynamic search and clear functions
+- 🗑️ **Cleaned Codebase:** Deprecated file-saving arguments in favor of strict Inkscape-only embedding
 
 ### v1.0.0 (2024)
 - ✨ Initial release
