@@ -95,20 +95,19 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 config = self.extension_instance.config
                 provider = config.get('last_provider', self.extension_instance.options.provider or "openai")
                 
+                
                 settings = {
-                    'api_key': self.extension_instance.get_api_key(provider) or "",
                     'provider': provider,
-                    'api_endpoint': config.get('endpoints', {}).get(provider, self.extension_instance.options.api_endpoint or ""),
-                    'model': config.get('last_model', self.extension_instance.options.model or ""),
-                    'manual_model_name': config.get('manual_models', {}).get(provider, self.extension_instance.options.manual_model_name or ""),
+                    'provider_settings': config.get('provider_settings', {}),
+                    'custom_profiles': config.get('custom_profiles', []),
                     'prompt': self.extension_instance.options.prompt or "",
                     'variations': self.extension_instance.options.variations or 1,
-                    'size': config.get('last_size', self.extension_instance.options.size or "512x512"),
-                    'aspect_ratio': config.get('last_aspect_ratio', self.extension_instance.options.aspect_ratio or "1:1"),
-                    'retry_count': config.get('last_retry_count', self.extension_instance.options.retry_count or 2),
-                    'temperature': config.get('last_temperature', self.extension_instance.options.temperature or 0.7),
-                    'position': config.get('last_position', self.extension_instance.options.position or "center"),
-                    'use_selection_context': config.get('last_use_selection_context', self.extension_instance.options.use_selection_context or False),
+                    'size': config.get('layout_settings', {}).get('size', self.extension_instance.options.size or "512x512"),
+                    'aspect_ratio': config.get('layout_settings', {}).get('aspect_ratio', self.extension_instance.options.aspect_ratio or "1:1"),
+                    'retry_count': config.get('layout_settings', {}).get('retry_count', self.extension_instance.options.retry_count or 2),
+                    'temperature': config.get('layout_settings', {}).get('temperature', self.extension_instance.options.temperature or 0.7),
+                    'position': config.get('layout_settings', {}).get('position', self.extension_instance.options.position or "center"),
+                    'use_selection_context': config.get('layout_settings', {}).get('use_selection_context', self.extension_instance.options.use_selection_context or False),
                     'available_models': {k: v['models'] for k, v in self.extension_instance.PROVIDERS.items()}
                 }
                 self.send_response(200)
@@ -247,19 +246,20 @@ class SVGLLMGenerator(inkex.EffectExtension):
         if self.config.get('last_provider'):
             self.options.provider = self.config['last_provider']
             
-            # Load endpoint and manual model for the last provider
-            endpoints = self.config.get('endpoints', {})
-            if self.options.provider in endpoints:
-                self.options.api_endpoint = endpoints[self.options.provider]
+            # Load endpoint and manual model for the last provider from new structure
+            provider_data = self.config.get('provider_settings', {}).get(self.options.provider, {})
+            if 'api_endpoint' in provider_data:
+                self.options.api_endpoint = provider_data['api_endpoint']
+            if 'manual_model_name' in provider_data:
+                self.options.manual_model_name = provider_data['manual_model_name']
+            if 'model' in provider_data:
+                self.options.model = provider_data['model']
             
-            manual_models = self.config.get('manual_models', {})
-            if self.options.provider in manual_models:
-                self.options.manual_model_name = manual_models[self.options.provider]
-            
-        if self.config.get('last_size'):
-            self.options.size = self.config['last_size']
-        if self.config.get('last_aspect_ratio'):
-            self.options.aspect_ratio = self.config['last_aspect_ratio']
+        layout = self.config.get('layout_settings', {})
+        if layout.get('size'):
+            self.options.size = layout['size']
+        if layout.get('aspect_ratio'):
+            self.options.aspect_ratio = layout['aspect_ratio']
         
         # Initialize status for async feedback
         self.status_data = {"status": "idle", "progress": 0, "message": ""}
@@ -358,26 +358,32 @@ class SVGLLMGenerator(inkex.EffectExtension):
         provider = data.get('provider')
         if provider:
             config['last_provider'] = provider
-            if data.get('model'): config['last_model'] = data.get('model')
+            if 'provider_settings' not in config: config['provider_settings'] = {}
+            if provider not in config['provider_settings']: config['provider_settings'][provider] = {}
             
-            if 'api_keys' not in config: config['api_keys'] = {}
-            if data.get('api_key'):
-                config['api_keys'][provider] = data.get('api_key')
+            p_data = config['provider_settings'][provider]
+            if 'api_key' in data: p_data['api_key'] = data.get('api_key')
+            if 'model' in data: p_data['model'] = data.get('model')
+            if 'api_endpoint' in data: p_data['api_endpoint'] = data.get('api_endpoint')
+            if 'manual_model_name' in data: p_data['manual_model_name'] = data.get('manual_model_name')
             
-            # Save endpoint and manual model
-            if 'endpoints' not in config: config['endpoints'] = {}
-            if data.get('api_endpoint'): config['endpoints'][provider] = data.get('api_endpoint')
+            # Handle custom profiles from UI
+            if 'custom_profiles' in data:
+                config['custom_profiles'] = data['custom_profiles']
             
-            if 'manual_models' not in config: config['manual_models'] = {}
-            if data.get('manual_model_name'): config['manual_models'][provider] = data.get('manual_model_name')
+            # Save any other profiles sent (UI handles syncing them)
+            if 'provider_settings' in data:
+                config['provider_settings'].update(data['provider_settings'])
         
-        # Save Styles if present
-        if data.get('size'): config['last_size'] = data.get('size')
-        if data.get('aspect_ratio'): config['last_aspect_ratio'] = data.get('aspect_ratio')
-        if data.get('retry_count'): config['last_retry_count'] = int(data.get('retry_count'))
-        if data.get('temperature'): config['last_temperature'] = float(data.get('temperature'))
-        if data.get('position'): config['last_position'] = data.get('position')
-        if 'use_selection_context' in data: config['last_use_selection_context'] = data.get('use_selection_context')
+        # Save Layout Styles
+        if 'layout_settings' not in config: config['layout_settings'] = {}
+        layout = config['layout_settings']
+        if data.get('size'): layout['size'] = data.get('size')
+        if data.get('aspect_ratio'): layout['aspect_ratio'] = data.get('aspect_ratio')
+        if data.get('retry_count'): layout['retry_count'] = int(data.get('retry_count'))
+        if data.get('temperature'): layout['temperature'] = float(data.get('temperature'))
+        if data.get('position'): layout['position'] = data.get('position')
+        if 'use_selection_context' in data: layout['use_selection_context'] = data.get('use_selection_context')
         
         self.save_config(config)
         self.config = config # Refresh local cache
@@ -579,30 +585,50 @@ class SVGLLMGenerator(inkex.EffectExtension):
                     self.set_config_value(config_key, self.options.api_key)
             return self.options.api_key
         
-        # 2. Check config file directly
-        # First check nested api_keys dictionary (new format)
-        api_keys = self.config.get('api_keys', {})
-        if provider in api_keys and api_keys[provider]:
-            return api_keys[provider]
-        
-        # Fallback to old top-level keys
-        config_key = self.PROVIDERS.get(provider, {}).get('config_key', '')
-        if config_key:
-            config_value = self.config.get(config_key, '')
-            if config_value and config_value not in ['sk-your-key-here', 'r8_your-token-here']:
-                return config_value
+        # 2. Check config file directly from nested provider_settings
+        p_data = self.config.get('provider_settings', {}).get(provider, {})
+        if 'api_key' in p_data and p_data['api_key']:
+            return p_data['api_key']
         
         return ''
 
     def load_config(self):
-        """Load saved configuration."""
+        """Load saved configuration and auto-migrate to new V2 schema if necessary."""
+        config = {'provider_settings': {}, 'custom_profiles': [], 'layout_settings': {}, 'last_provider': 'openai'}
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                pass
-        return {'api_keys': {}, 'last_provider': 'openai'}
+                    loaded = json.load(f)
+                    
+                    # Merge new schema
+                    if 'provider_settings' in loaded:
+                        config.update(loaded)
+                    else:
+                        # Auto-migrate v1 -> v2 schema
+                        config['last_provider'] = loaded.get('last_provider', 'openai')
+                        
+                        layout_keys = ['last_size', 'last_aspect_ratio', 'last_retry_count', 'last_temperature', 'last_position', 'last_use_selection_context']
+                        for k in layout_keys:
+                            if k in loaded:
+                                config['layout_settings'][k.replace('last_', '')] = loaded.get(k)
+                        
+                        api_keys = loaded.get('api_keys', {})
+                        endpoints = loaded.get('endpoints', {})
+                        manual_models = loaded.get('manual_models', {})
+                        
+                        for provider in set(list(api_keys.keys()) + list(endpoints.keys()) + list(manual_models.keys()) + [config['last_provider']]):
+                            if provider not in config['provider_settings']:
+                                config['provider_settings'][provider] = {}
+                            if provider in api_keys: config['provider_settings'][provider]['api_key'] = api_keys[provider]
+                            if provider in endpoints: config['provider_settings'][provider]['api_endpoint'] = endpoints[provider]
+                            if provider in manual_models: config['provider_settings'][provider]['manual_model_name'] = manual_models[provider]
+                            if provider == config['last_provider'] and 'last_model' in loaded:
+                                config['provider_settings'][provider]['model'] = loaded['last_model']
+                                
+                    return config
+            except Exception as e:
+                inkex.errormsg(f"Migration error: {e}")
+        return config
     
     def save_config(self, config):
         """Save configuration."""
@@ -615,10 +641,12 @@ class SVGLLMGenerator(inkex.EffectExtension):
     def save_api_key(self, api_key):
         """Save API key for the current provider."""
         config = self.load_config()
-        if 'api_keys' not in config:
-            config['api_keys'] = {}
-        config['api_keys'][self.options.provider] = api_key
-        config['last_provider'] = self.options.provider
+        provider = self.options.provider
+        if 'provider_settings' not in config: config['provider_settings'] = {}
+        if provider not in config['provider_settings']: config['provider_settings'][provider] = {}
+        
+        config['provider_settings'][provider]['api_key'] = api_key
+        config['last_provider'] = provider
         self.save_config(config)
     
     def load_history(self):

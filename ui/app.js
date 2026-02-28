@@ -19,7 +19,13 @@ document.addEventListener('DOMContentLoaded', () => {
         summaryDiv.innerText = `Active: ${p} | Model: ${mm || m}`;
     };
 
+    const profileGroup = document.getElementById('profile-group');
+    const profileSelect = document.getElementById('profile_select');
+    const addProfileBtn = document.getElementById('add-profile-btn');
+
     let availableModels = {}; // Global store for models from backend
+    let customProfiles = []; // Global store for profiles
+    let providerSettings = {}; // Global store for each provider's settings
 
     // Initial settings fetch
     const fetchSettings = async () => {
@@ -28,13 +34,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 const settings = await response.json();
 
-                if (settings.available_models) {
-                    availableModels = settings.available_models;
-                }
+                if (settings.available_models) availableModels = settings.available_models;
+                if (settings.custom_profiles) customProfiles = settings.custom_profiles;
+                if (settings.provider_settings) providerSettings = settings.provider_settings;
 
                 if (settings.prompt) document.getElementById('prompt').value = settings.prompt;
-                if (settings.api_key) document.getElementById('api_key').value = settings.api_key;
-                if (settings.api_endpoint) document.getElementById('api_endpoint').value = settings.api_endpoint;
 
                 // Set the model dropdown options based on the provider first
                 const updateModelDropdown = (provider) => {
@@ -58,10 +62,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (settings.provider) {
                     providerSelect.value = settings.provider;
                     updateModelDropdown(settings.provider);
-                    providerSelect.dispatchEvent(new Event('change'));
-                }
-                if (settings.model) {
-                    document.getElementById('model').value = settings.model;
+
+                    // Delay triggering change event so profiles can be populated first
+                    setTimeout(() => {
+                        providerSelect.dispatchEvent(new Event('change'));
+
+                        // Overwrite with currently active settings (e.g. if a profile was just loaded)
+                        const activeP = settings.provider;
+                        if (providerSettings[activeP]) {
+                            const pData = providerSettings[activeP];
+                            if (pData.api_key) document.getElementById('api_key').value = pData.api_key;
+                            if (pData.api_endpoint) document.getElementById('api_endpoint').value = pData.api_endpoint;
+                            if (pData.manual_model_name) document.getElementById('manual_model_name').value = pData.manual_model_name;
+                            if (pData.model) {
+                                document.getElementById('model').value = pData.model;
+                                // Add to dropdown if 'custom' is not there
+                                if (!Array.from(document.getElementById('model').options).some(o => o.value === pData.model)) {
+                                    const opt = document.createElement('option');
+                                    opt.value = pData.model;
+                                    opt.innerText = pData.model;
+                                    document.getElementById('model').appendChild(opt);
+                                    document.getElementById('model').value = pData.model;
+                                }
+                            }
+                        }
+                    }, 50);
                 }
                 if (settings.manual_model_name) document.getElementById('manual_model_name').value = settings.manual_model_name;
                 if (settings.variations) document.getElementById('variations').value = settings.variations;
@@ -189,22 +214,111 @@ document.addEventListener('DOMContentLoaded', () => {
         tempVal.innerText = tempSlider.value;
     });
 
+    // Profile Handling Logic
+    const loadProfileData = (profileId) => {
+        const pData = providerSettings[profileId] || {};
+        document.getElementById('api_key').value = pData.api_key || "";
+        document.getElementById('api_endpoint').value = pData.api_endpoint || "";
+        document.getElementById('manual_model_name').value = pData.manual_model_name || "";
+        if (pData.model) {
+            document.getElementById('model').value = pData.model;
+        }
+        updateSummary();
+    };
+
+    const updateProfileDropdown = () => {
+        profileSelect.innerHTML = '';
+        customProfiles.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.innerText = p.name;
+            profileSelect.appendChild(opt);
+        });
+
+        // Auto-select provider if it matches a profile ID
+        if (customProfiles.some(p => p.id === providerSelect.value)) {
+            profileSelect.value = providerSelect.value;
+        } else if (customProfiles.length > 0) {
+            profileSelect.value = customProfiles[0].id;
+            providerSelect.value = customProfiles[0].id; // Sync provider to first profile immediately to avoid desync
+        }
+    };
+
+    profileSelect.addEventListener('change', () => {
+        const selectedId = profileSelect.value;
+        // The provider internally is really just the profile ID for custom ones
+        const currentProviderOption = Array.from(providerSelect.options).find(o => o.value === selectedId);
+
+        // If the profile ID isn't in the main provider list, we temporarily inject it so backend knows
+        if (!currentProviderOption) {
+            const opt = document.createElement('option');
+            opt.value = selectedId;
+            opt.innerText = selectedId;
+            opt.hidden = true; // Still grouped visually under "OpenAI Compatible"
+            providerSelect.appendChild(opt);
+        }
+
+        providerSelect.value = selectedId;
+        loadProfileData(selectedId);
+    });
+
+    addProfileBtn.addEventListener('click', () => {
+        const name = prompt("Enter a name for the new profile:");
+        if (name && name.trim() !== '') {
+            const id = 'custom_' + Date.now().toString(36);
+            customProfiles.push({ id, name });
+            providerSettings[id] = {
+                api_key: "",
+                api_endpoint: "http://localhost:1234/v1",
+                manual_model_name: "",
+                model: "custom"
+            };
+            updateProfileDropdown();
+            profileSelect.value = id;
+            profileSelect.dispatchEvent(new Event('change'));
+        }
+    });
+
     // Provider Change UI Logic
     providerSelect.addEventListener('change', () => {
         const val = providerSelect.value;
-        if (val === 'ollama' || val === 'openai_compatible') {
+        let isCustomProfile = customProfiles.some(p => p.id === val);
+
+        if (val === 'ollama' || val === 'openai_compatible' || isCustomProfile) {
             endpointGroup.classList.remove('hidden');
             manualModelGroup.classList.remove('hidden');
+
+            if (val === 'openai_compatible' || isCustomProfile) {
+                profileGroup.classList.remove('hidden');
+                // Ensure there's at least one default profile if they click OpenAI Compatible
+                if (customProfiles.length === 0) {
+                    customProfiles.push({ id: 'custom_default', name: 'Default Profile' });
+                    updateProfileDropdown();
+                    profileSelect.dispatchEvent(new Event('change')); // Force select first
+                } else {
+                    updateProfileDropdown();
+                    // Auto-load data if we switched TO a custom profile
+                    if (isCustomProfile) loadProfileData(val);
+                }
+            } else {
+                profileGroup.classList.add('hidden');
+                loadProfileData(val);
+            }
         } else {
             endpointGroup.classList.add('hidden');
             manualModelGroup.classList.add('hidden');
+            profileGroup.classList.add('hidden');
+            loadProfileData(val);
         }
 
         // Keep local static model definitions in sync when provider changes manually
-        if (availableModels[val]) {
+        // For custom profiles, availableModels key might just be 'openai_compatible' logic
+        const modelsLookupKey = val.startsWith('custom_') ? 'openai_compatible' : val;
+
+        if (availableModels[modelsLookupKey]) {
             const modelSelect = document.getElementById('model');
             modelSelect.innerHTML = '';
-            availableModels[val].forEach(m => {
+            availableModels[modelsLookupKey].forEach(m => {
                 const opt = document.createElement('option');
                 opt.value = m;
                 opt.innerText = m;
@@ -220,15 +334,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Helper to get all form data
     const getFormData = () => {
+        // Save current UI state back to the active provider
+        const currentProvider = providerSelect.value;
+        providerSettings[currentProvider] = {
+            ...providerSettings[currentProvider],
+            api_key: document.getElementById('api_key').value,
+            api_endpoint: document.getElementById('api_endpoint').value,
+            model: document.getElementById('model').value,
+            manual_model_name: document.getElementById('manual_model_name').value
+        };
+
         return {
             prompt: document.getElementById('prompt').value,
             prompt_preset: document.getElementById('prompt_preset').value,
             style_hint: document.getElementById('style_hint').value,
-            provider: providerSelect.value,
-            api_key: document.getElementById('api_key').value,
-            api_endpoint: document.getElementById('api_endpoint').value,
-            model: document.getElementById('model').value,
-            manual_model_name: document.getElementById('manual_model_name').value,
+            provider: currentProvider,
+            provider_settings: providerSettings,
+            custom_profiles: customProfiles,
             size: document.getElementById('size').value,
             aspect_ratio: document.getElementById('aspect_ratio').value,
             variations: document.getElementById('variations').value,
