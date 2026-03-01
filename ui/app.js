@@ -352,7 +352,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const getFormData = () => {
         // Evaluate the true provider ID based on the UI dropdowns
         const mainProvider = providerSelect.value;
-        const currentProvider = mainProvider === 'openai_compatible' ? profileSelect.value : mainProvider;
+        let currentProvider = mainProvider === 'openai_compatible' ? profileSelect.value : mainProvider;
+
+        // Failsafe in case profileSelect momentarily has no selected option
+        if (!currentProvider && mainProvider === 'openai_compatible' && customProfiles.length > 0) {
+            currentProvider = providerSettings['last_active_profile'] || customProfiles[0].id;
+        }
 
         // Save current UI state back to the active provider
         providerSettings[currentProvider] = {

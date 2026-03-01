@@ -572,7 +572,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         3. Config file (if use_config_key is True)
         """
         if not provider:
-            provider = self.options.provider
+            provider = getattr(self.options, 'provider', None) or self.config.get('last_provider', 'openai')
 
         # Skip API key for local provider
         if provider == 'local':
@@ -915,7 +915,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
 
     def call_api(self, prompt, api_key):
         """Route to appropriate API based on provider."""
-        provider = self.options.provider.lower()
+        provider = (getattr(self.options, 'provider', None) or self.config.get('last_provider', 'openai')).lower().strip()
         provider_type = 'openai_compatible' if provider.startswith('custom_') else provider
         
         if provider_type == "openai":
