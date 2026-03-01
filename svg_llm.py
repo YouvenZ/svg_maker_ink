@@ -972,6 +972,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
         if is_compatible and 'openrouter.ai' in url.lower():
             headers['HTTP-Referer'] = 'https://github.com/bezineb5/svg_maker'
             headers['X-OpenRouter-Title'] = 'Inkscape AI SVG Generator'
+            if not api_key.startswith('sk-or-v1-'):
+                headers['Authorization'] = f'Bearer sk-or-v1-{api_key}'
         
         # Determine model name
         model = self.options.model
