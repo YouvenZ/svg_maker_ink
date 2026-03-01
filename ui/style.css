@@ -31,7 +31,7 @@ body {
     max-width: 500px;
     margin: 10px auto;
     background: var(--card-bg);
-    padding: 24px;
+    padding: 16px;
     border-radius: 16px;
     border: 1px solid var(--border-color);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
