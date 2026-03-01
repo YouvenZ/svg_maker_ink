@@ -134,7 +134,10 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 content_length = int(self.headers['Content-Length'])
                 post_data = self.rfile.read(content_length)
                 data = json.loads(post_data.decode('utf-8'))
-                
+                # Extract data for debugging
+                with open(os.path.join(os.path.dirname(__file__), "debug_submit.log"), "w") as f:
+                    json.dump(data, f, indent=2)
+
                 # Start generation in a background thread
                 threading.Thread(target=self.extension_instance.perform_generation, args=(data,)).start()
                 
@@ -520,6 +523,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
             
             # Variations count
             variations = min(max(1, int(self.options.variations or 1)), 4)
+            success_count = 0
+            last_error = None
             
             for i in range(variations):
                 idx_msg = f" (Variation {i+1}/{variations})" if variations > 1 else ""
@@ -541,22 +546,27 @@ class SVGLLMGenerator(inkex.EffectExtension):
                     
                     # Add to document
                     self.add_svg_to_document(svg_code, width, height, offset_x, variation_num=i+1)
+                    success_count += 1
                     
                 except Exception as e:
+                    last_error = str(e)
                     inkex.errormsg(f"Variation {i+1} failed: {e}")
             
-            # Save history
-            if self.options.save_to_history:
-                self.save_to_history(self.options.prompt, width, height)
+            if success_count > 0:
+                # Save history
+                if self.options.save_to_history:
+                    self.save_to_history(self.options.prompt, width, height)
 
-            self.status_data = {"status": "completed", "progress": 100, "message": "Generation successful!"}
-            
-            # QUIT GTK after a small delay, safely from the UI thread
-            if GTK_UI_AVAILABLE:
-                from gi.repository import GLib, Gtk
-                import time
-                time.sleep(1) # Final display of success status
-                GLib.idle_add(Gtk.main_quit)
+                self.status_data = {"status": "completed", "progress": 100, "message": f"Successfully generated {success_count} variations!"}
+                
+                # QUIT GTK after a small delay, safely from the UI thread
+                if GTK_UI_AVAILABLE:
+                    from gi.repository import GLib, Gtk
+                    import time
+                    time.sleep(1) # Final display of success status
+                    GLib.idle_add(Gtk.main_quit)
+            else:
+                self.status_data = {"status": "error", "progress": 0, "message": f"Error: {last_error or 'Unknown generation failure'}"}
                 
         except Exception as e:
             self.status_data = {"status": "error", "progress": 0, "message": f"Error: {str(e)}"}

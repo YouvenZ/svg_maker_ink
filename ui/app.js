@@ -453,7 +453,8 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.innerText = "Processing...";
         if (progressContainer) progressContainer.classList.remove('hidden');
         progressFill.style.width = '10%';
-        progressStatus.innerText = "Connecting to server...";
+        progressFill.style.background = 'var(--accent-primary)'; // Reset to blue just in case
+        progressStatus.innerHTML = "Connecting to server...";
 
         try {
             const response = await fetch('/submit', {
@@ -477,7 +478,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             progressFill.style.background = "#4ade80";
                         } else if (statusData.status === 'error') {
                             clearInterval(poll);
-                            progressStatus.innerText = "Error: " + statusData.message;
+                            progressStatus.innerHTML = `<span style="color: #ef4444;"><strong>Error:</strong> ${statusData.message}</span>`;
+                            progressFill.style.background = "#ef4444";
                             submitBtn.disabled = false;
                             submitBtn.innerText = "Generate Vector";
                         }
