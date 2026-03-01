@@ -1,10 +1,47 @@
 {
-    "openai_api_key": "sk-proj-skopenai-api-key-here",
-    "stability_api_key": "sk-your-stability-api-key-here",
-    "replicate_api_key": "r8_your-replicate-token-here",
-    "default_provider": "openai",
-    "default_model": "dall-e-3",
-    "default_size": "1024x1024",
-    "default_quality": "standard",
-    "default_save_directory": "~/.config/inkscape/extensions/svg_maker/"
+    "provider_settings": {
+        "openai": {
+            "api_key": "sk-your-openai-api-key-here",
+            "model": "gpt-4o"
+        },
+        "anthropic": {
+            "api_key": "sk-ant-api03-your-anthropic-key-here",
+            "model": "claude-3-5-sonnet-20241022"
+        },
+        "google": {
+            "api_key": "AIzaSy-your-google-gemini-key-here",
+            "model": "gemini-1.5-pro"
+        },
+        "ollama": {
+            "api_endpoint": "http://localhost:11434",
+            "model": "llama3.1"
+        },
+        "openai_compatible": {
+            "api_key": "your-api-key-here",
+            "api_endpoint": "http://localhost:1234/v1",
+            "model": "your-model-name",
+            "manual_model_name": ""
+        },
+        "last_active_profile": "custom_openrouter",
+        "custom_openrouter": {
+            "api_key": "sk-or-v1-your-openrouter-key-here",
+            "api_endpoint": "https://openrouter.ai/api/v1",
+            "model": "anthropic/claude-3.5-sonnet",
+            "manual_model_name": ""
+        }
+    },
+    "custom_profiles": [
+        {
+            "id": "custom_openrouter",
+            "name": "OpenRouter"
+        }
+    ],
+    "layout_settings": {
+        "size": "medium",
+        "aspect_ratio": "1:1",
+        "retry_count": 2,
+        "position": "center",
+        "use_selection_context": false
+    },
+    "last_provider": "openai"
 }
