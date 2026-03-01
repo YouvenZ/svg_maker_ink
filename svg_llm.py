@@ -483,6 +483,14 @@ class SVGLLMGenerator(inkex.EffectExtension):
                         setattr(self.options, key, value)
                 else:
                     setattr(self.options, key, value)
+                    
+            # Unpack provider-specific settings (like api_endpoint, model) since UI sends them nested
+            provider = data.get('provider')
+            if provider and 'provider_settings' in data:
+                p_settings = data['provider_settings'].get(provider, {})
+                for k in ['api_endpoint', 'model', 'api_key', 'manual_model_name']:
+                    if k in p_settings:
+                        setattr(self.options, k, p_settings[k])
 
             self.status_data.update({"progress": 10, "message": "Loading configuration..."})
             api_key = self.get_api_key()
