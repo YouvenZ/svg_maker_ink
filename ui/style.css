@@ -23,8 +23,8 @@ body {
     min-height: 100vh;
     display: flex;
     justify-content: center;
-    align-items: center;
-    padding: 20px;
+    align-items: start;
+    padding: 10px;
 }
 
 .container {
@@ -35,7 +35,7 @@ body {
     border-radius: 16px;
     border: 1px solid var(--border-color);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    height: 700px;
+    /* height: 700px; */
     /* STRICT Static height */
     display: flex;
     flex-direction: column;
