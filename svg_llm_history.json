@@ -1,6 +1,86 @@
 [
   {
     "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T08:36:05.884387",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T08:30:00.732606",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4-turbo",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T08:27:58.507466",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4-turbo",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T08:27:06.116568",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T08:05:48.264026",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T08:01:47.423895",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T07:57:11.018232",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
+    "timestamp": "2026-02-19T07:37:11.796736",
+    "width": 600,
+    "height": 600,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "style": "detailed",
+    "color_scheme": "grayscale"
+  },
+  {
+    "prompt": "LSTM cell detailed with all the information needed",
     "timestamp": "2026-02-18T12:30:49.303598",
     "width": 600,
     "height": 600,

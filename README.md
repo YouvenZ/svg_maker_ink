@@ -1,4 +1,7 @@
-Collecting workspace information# SVG LLM Generator for Inkscape
+
+<div align="center">
+
+# SVG LLM Generator for Inkscape
 
 [![Inkscape](https://img.shields.io/badge/Inkscape-1.0+-blue.svg)](https://inkscape.org/)
 [![Python](https://img.shields.io/badge/Python-3.6+-green.svg)](https://www.python.org/)
@@ -7,6 +10,19 @@ Collecting workspace information# SVG LLM Generator for Inkscape
 > **Generate SVG graphics using AI directly within Inkscape**
 
 A powerful Inkscape extension that leverages multiple AI providers (OpenAI, Anthropic Claude, Google Gemini, and local Ollama) to generate scalable vector graphics from text descriptions.
+</div>
+
+## 📺 Demo
+
+<div align="center">
+
+<!-- Replace VIDEO_ID with your actual YouTube video ID -->
+[![Watch the Demo](https://img.youtube.com/vi/z-PGFjJGexs/maxresdefault.jpg)](https://www.youtube.com/watch?v=z-PGFjJGexs)
+
+*Click to watch the full tutorial on YouTube*
+
+</div>
+
 
 ---
 

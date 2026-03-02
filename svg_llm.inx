@@ -19,8 +19,7 @@
             <param name="use_config_key" type="bool" gui-text="Use config key">true</param>
 
             
-            <label>Environment variables: OPENAI_API_KEY, STABILITY_API_KEY, REPLICATE_API_TOKEN</label>
-            <spacer/>
+            <label>Environment variables: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY</label>            <spacer/>
             <param name="save_api_key" type="bool" gui-text="Save API key for future use">false</param>
             
             <param name="api_endpoint" type="string" gui-text="Custom endpoint (Ollama):">http://localhost:11434</param>

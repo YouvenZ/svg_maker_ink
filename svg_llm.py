@@ -23,44 +23,39 @@ class SVGLLMGenerator(inkex.EffectExtension):
     MAX_HISTORY = 50
     
     PROVIDERS = {
-        'openai': {
-            'name': 'OpenAI DALL-E',
-            'generate_url': 'https://api.openai.com/v1/images/generations',
-            'edit_url': 'https://api.openai.com/v1/images/edits',
-            'variation_url': 'https://api.openai.com/v1/images/variations',
-            'env_key': 'OPENAI_API_KEY',
-            'config_key': 'openai_api_key',
-            'models': ['dall-e-3', 'dall-e-2', 'gpt-image-1'],
-            'sizes': ['1024x1024', '1024x1792', '1792x1024', '512x512', '256x256']
-        },
-        'stability': {
-            'name': 'Stability AI',
-            'generate_url': 'https://api.stability.ai/v1/generation/{engine}/text-to-image',
-            'img2img_url': 'https://api.stability.ai/v1/generation/{engine}/image-to-image',
-            'env_key': 'STABILITY_API_KEY',
-            'config_key': 'stability_api_key',
-            'models': ['stable-diffusion-xl-1024-v1-0', 'stable-diffusion-v1-6', 'stable-diffusion-xl-beta-v2-2-2'],
-            'sizes': ['1024x1024', '1152x896', '896x1152', '1216x832', '832x1216', '512x512']
-        },
-        'replicate': {
-            'name': 'Replicate',
-            'generate_url': 'https://api.replicate.com/v1/predictions',
-            'env_key': 'REPLICATE_API_TOKEN',
-            'config_key': 'replicate_api_key',
-            'models': ['stability-ai/sdxl', 'black-forest-labs/flux-schnell', 'black-forest-labs/flux-pro'],
-            'sizes': ['1024x1024', '1024x768', '768x1024', '512x512']
-        },
-        'local': {
-            'name': 'Local (Automatic1111/ComfyUI)',
-            'generate_url': 'http://127.0.0.1:7860/sdapi/v1/txt2img',
-            'img2img_url': 'http://127.0.0.1:7860/sdapi/v1/img2img',
-            'env_key': '',
-            'config_key': '',
-            'models': ['default'],
-            'sizes': ['1024x1024', '768x768', '512x512', '768x512', '512x768']
-        }
+    'openai': {
+        'name': 'OpenAI',
+        'generate_url': 'https://api.openai.com/v1/chat/completions',
+        'env_key': 'OPENAI_API_KEY',
+        'config_key': 'openai_api_key',
+        'models': ['gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
+        'sizes': ['1024x1024', '1024x1792', '1792x1024', '512x512', '256x256']
+    },
+    'anthropic': {
+        'name': 'Anthropic Claude',
+        'generate_url': 'https://api.anthropic.com/v1/messages',
+        'env_key': 'ANTHROPIC_API_KEY',
+        'config_key': 'anthropic_api_key',
+        'models': ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+        'sizes': ['1024x1024']
+    },
+    'google': {
+        'name': 'Google Gemini',
+        'generate_url': 'https://generativelanguage.googleapis.com/v1beta/models',
+        'env_key': 'GOOGLE_API_KEY',
+        'config_key': 'google_api_key',
+        'models': ['gemini-1.5-pro', 'gemini-1.5-flash'],
+        'sizes': ['1024x1024']
+    },
+    'ollama': {
+        'name': 'Ollama (Local)',
+        'generate_url': 'http://localhost:11434/api/generate',
+        'env_key': '',
+        'config_key': '',
+        'models': ['llama3.1', 'codellama', 'mistral'],
+        'sizes': ['1024x1024', '768x768', '512x512']
     }
-
+}
 
 
     def __init__(self):
