@@ -7,12 +7,37 @@ Supports OpenAI, Anthropic, Google Gemini, and Ollama (local).
 import inkex
 from inkex import Group
 import re
+import ssl
 import urllib.request
 import json
 import xml.etree.ElementTree as ET
-import ssl
 import os
+import time
 from datetime import datetime
+
+try:
+    from svg_llm_prompts import PromptLoader as _PromptLoader
+except Exception:
+    _PromptLoader = None
+
+
+def _build_ssl_context():
+    """
+    Return an SSL context that performs full certificate verification.
+    Strategy (in order):
+      1. certifi â€” ships its own CA bundle, works everywhere
+      2. Windows cert store (ssl.create_default_context loads it automatically on Windows)
+      3. Default context with no explicit cafile (works on most Linux/macOS)
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    return ssl.create_default_context()
+
+
+_SSL_CONTEXT = _build_ssl_context()
 
 
 class SVGLLMGenerator(inkex.EffectExtension):
@@ -20,6 +45,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
     
     CONFIG_FILENAME = 'config.json'
     HISTORY_FILENAME = 'svg_llm_history.json'
+    TEMPLATES_FILENAME = 'svg_llm_templates.json'
     MAX_HISTORY = 50
     
     PROVIDERS = {
@@ -47,6 +73,14 @@ class SVGLLMGenerator(inkex.EffectExtension):
         'models': ['gemini-1.5-pro', 'gemini-1.5-flash'],
         'sizes': ['1024x1024']
     },
+    'azure': {
+        'name': 'Azure OpenAI',
+        'generate_url': '',  # Constructed from endpoint at call time
+        'env_key': 'AZURE_OPENAI_API_KEY',
+        'config_key': 'azure_openai_api_key',
+        'models': ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
+        'sizes': ['1024x1024']
+    },
     'ollama': {
         'name': 'Ollama (Local)',
         'generate_url': 'http://localhost:11434/api/generate',
@@ -62,144 +96,152 @@ class SVGLLMGenerator(inkex.EffectExtension):
         super().__init__()
         self.config_path = os.path.join(os.path.dirname(__file__), self.CONFIG_FILENAME)
         self.history_path = os.path.join(os.path.dirname(__file__), self.HISTORY_FILENAME)
+        self.templates_path = os.path.join(os.path.dirname(__file__), self.TEMPLATES_FILENAME)
+        self.prompt_loader = _PromptLoader(os.path.dirname(__file__)) if _PromptLoader else None
     
-    def add_arguments(self, pars):
-        # Tab
-        pars.add_argument("--tab", type=str, default="prompt", help="Active tab")
-        
-        # Provider settings
-        pars.add_argument("--provider", type=str, default="openai", 
-            help="API provider (openai, anthropic, google, ollama)")
-        pars.add_argument("--api_key", type=str, default="", help="API key")
-        pars.add_argument("--api_endpoint", type=str, default="", 
-            help="Custom API endpoint (for Ollama or self-hosted)")
-        pars.add_argument("--save_api_key", type=inkex.Boolean, default=False, 
-            help="Save API key for future use")
-        
-        # Prompt settings
-        pars.add_argument("--prompt", type=str, default="", help="User prompt")
-        pars.add_argument("--use_selection_context", type=inkex.Boolean, default=False,
-            help="Include selected elements as context")
-        pars.add_argument("--prompt_preset", type=str, default="none",
-            help="Prompt preset (icon, illustration, diagram, pattern, logo)")
-        
-        # Model settings
-        pars.add_argument("--model", type=str, default="gpt-4-turbo", help="Model to use")
-        pars.add_argument("--temperature", type=float, default=0.7, help="Temperature")
-        pars.add_argument("--max_tokens", type=int, default=4000, help="Max tokens")
-        pars.add_argument("--timeout", type=int, default=60, help="Request timeout in seconds")
-        pars.add_argument("--retry_count", type=int, default=2, help="Number of retries on failure")
-        
-        # Size settings
-        pars.add_argument("--size", type=str, default="medium", help="Object size")
-        pars.add_argument("--custom_width", type=int, default=400, help="Custom width")
-        pars.add_argument("--custom_height", type=int, default=400, help="Custom height")
-        pars.add_argument("--aspect_ratio", type=str, default="square",
-            help="Aspect ratio (square, landscape, portrait, widescreen)")
-        
-        # Style settings
-        pars.add_argument("--style_hint", type=str, default="none", help="Style hint")
-        pars.add_argument("--color_scheme", type=str, default="any", help="Color scheme")
-        pars.add_argument("--complexity", type=str, default="medium",
-            help="Complexity level (simple, medium, complex)")
-        pars.add_argument("--stroke_style", type=str, default="any",
-            help="Stroke style (any, thin, medium, thick, none)")
-        
-        # Output settings
-        pars.add_argument("--add_group", type=inkex.Boolean, default=True, help="Add group")
-        pars.add_argument("--group_name", type=str, default="", help="Custom group name")
-        pars.add_argument("--position", type=str, default="center",
-            help="Position (center, cursor, origin, selection)")
-        pars.add_argument("--include_animations", type=inkex.Boolean, default=False,
-            help="Include CSS/SMIL animations")
-        pars.add_argument("--include_gradients", type=inkex.Boolean, default=True,
-            help="Allow gradients in output")
-        pars.add_argument("--add_accessibility", type=inkex.Boolean, default=False,
-            help="Add title/desc for accessibility")
-        pars.add_argument("--optimize_paths", type=inkex.Boolean, default=True,
-            help="Request optimized paths")
-        
-        # Advanced settings
-        pars.add_argument("--variations", type=int, default=1,
-            help="Number of variations to generate (1-4)")
-        pars.add_argument("--seed", type=int, default=-1,
-            help="Random seed (-1 for random)")
-        pars.add_argument("--save_to_history", type=inkex.Boolean, default=True,
-            help="Save prompt to history")
-        
-
-
-        pars.add_argument("--save_to_disk", type=inkex.Boolean, default=True, help="Save to disk")
-        pars.add_argument("--save_directory", type=str, default="", help="Save directory")
-        pars.add_argument("--filename_prefix", type=str, default="ai_image", help="Filename prefix")
-        pars.add_argument("--embed_in_svg", type=inkex.Boolean, default=True, help="Embed in SVG")
-        pars.add_argument("--use_env_key", type=inkex.Boolean, default=True, help="Use of Env file")
-        pars.add_argument("--use_config_key", type=inkex.Boolean, default=True, help="Use of configurated key")
-
-
-
-    
-
-
     def effect(self):
         """Main effect function."""
-        # Load config and potentially saved API key
+        # â”€â”€ GTK is required â€” no INX fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        try:
+            import gi
+            gi.require_version('Gtk', '3.0')
+            from gi.repository import Gtk
+            from svg_llm_dialog import SVGLLMDialog, GenerationProgressDialog, GenerationResultDialog
+        except Exception as _gtk_err:
+            inkex.errormsg(
+                f"AI SVG Generator requires GTK 3 which could not be loaded:\n"
+                f"{_gtk_err}\n\n"
+                "Make sure you are running Inkscape with its bundled Python "
+                "(not a standalone Python environment)."
+            )
+            return
+
         self.config = self.load_config()
-        
+
+        layers = self._get_layers()
+        dialog = SVGLLMDialog(
+            config=self.config,
+            config_path=self.config_path,
+            history_path=self.history_path,
+            templates_path=self.templates_path,
+            has_selection=bool(self.svg.selection),
+            layers=layers,
+        )
+        dialog.present()
+        Gtk.main()
+        if not dialog._accepted:
+            dialog.destroy()
+            return
+        self.gen_options = dialog.get_options()
+        dialog._save_defaults_to_config(self.gen_options)
+        dialog.destroy()
+
+        # â”€â”€ Common validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         api_key = self.get_api_key()
 
-        # Save API key if requested
-        if self.options.save_api_key and api_key:
+        if self.gen_options.save_api_key and api_key:
             self.save_api_key(api_key)
-        
-        # Validate prompt
-        if not self.options.prompt or len(self.options.prompt.strip()) < 3:
+
+        self._validate_model_for_provider()
+
+        if not self.gen_options.prompt or len(self.gen_options.prompt.strip()) < 3:
             inkex.errormsg("Please provide a description of what you want to generate.")
             return
-        
-        # Get size
+
+        if not self.gen_options.embed_in_svg and not self.gen_options.save_to_disk:
+            inkex.errormsg(
+                "'Link (not embed)' requires 'Save to disk' to be enabled. "
+                "Switching to inline embed."
+            )
+            self.gen_options.embed_in_svg = True
+
         width, height = self.get_size()
-        
-        # Get selection context if enabled
+
         selection_context = ""
-        if self.options.use_selection_context and self.svg.selection:
+        if self.gen_options.use_selection_context and self.svg.selection:
             selection_context = self.get_selection_context()
-        
-        # Build the enhanced prompt
+
         enhanced_prompt = self.build_prompt(width, height, selection_context)
-        
-        # Generate variations
-        variations = min(max(1, self.options.variations), 4)
-        
-        for i in range(variations):
-            try:
-                svg_code = self.call_api_with_retry(enhanced_prompt, api_key, i)
-                
-                if not svg_code:
-                    inkex.errormsg(f"No SVG code generated for variation {i+1}. Please try again.")
-                    continue
-                
-                # Validate SVG
-                svg_code = self.validate_and_fix_svg(svg_code, width, height)
-                
-                # Parse and add SVG to document
-                offset_x = i * (width + 20) if variations > 1 else 0
-                self.add_svg_to_document(svg_code, width, height, offset_x, variation_num=i+1)
-                
-            except Exception as e:
-                inkex.errormsg(f"Error generating variation {i+1}: {str(e)}")
+        variations = min(max(1, self.gen_options.variations), 4)
+
+        # â”€â”€ Run API calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        def gen_fn(variation_idx):
+            return self.call_api_with_retry(enhanced_prompt, api_key, variation_idx)
+
+        prog = GenerationProgressDialog(variations)
+        prog.start(gen_fn)
+        prog.present()
+        Gtk.main()
+        prog.destroy()
+        if not prog._done_ok or prog.cancelled:
+            return
+        svg_results = prog.results
+
+        # â”€â”€ Process results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        inkex.utils.debug("Parsing and inserting generated SVG(s)â€¦")
+        result_entries = []
+        for i, (svg_code, error) in enumerate(svg_results):
+            entry = {
+                'variation': i + 1,
+                'status': 'error',
+                'error': None,
+                'saved_path': None,
+                'svg_size': None,
+            }
+            if error:
+                entry['error'] = error
+                result_entries.append(entry)
                 continue
-        
-        # Save to history
-        if self.options.save_to_history:
-            self.save_to_history(self.options.prompt, width, height)
+            if not svg_code:
+                entry['error'] = 'No SVG code returned by the model.'
+                result_entries.append(entry)
+                continue
+
+            svg_code = self.validate_and_fix_svg(svg_code, width, height)
+            entry['svg_size'] = len(svg_code.encode('utf-8'))
+
+            saved_path = None
+            if self.gen_options.save_to_disk:
+                saved_path = self.save_svg_to_disk(svg_code)
+            entry['saved_path'] = saved_path
+
+            offset_x = i * (width + 20) if variations > 1 else 0
+            if not self.gen_options.embed_in_svg and saved_path:
+                self._insert_image_link(saved_path, width, height, offset_x, variation_num=i + 1)
+            else:
+                self.add_svg_to_document(svg_code, width, height, offset_x, variation_num=i + 1)
+
+            entry['status'] = 'ok'
+            result_entries.append(entry)
+
+        # Show result summary dialog
+        result_dlg = GenerationResultDialog(result_entries)
+        result_dlg.present()
+        Gtk.main()
+        result_dlg.destroy()
+
+        # â”€â”€ Canvas / page handling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        if variations > 1:
+            total_width = variations * (width + 20)
+            if getattr(self.gen_options, 'auto_fit_page', False):
+                self._auto_fit_page(width, height, variations)
+            elif total_width > self.svg.viewport_width * 1.5:
+                inkex.errormsg(
+                    f"Note: {variations} variations at {width}px each "
+                    f"({total_width}px total) extend beyond the canvas. "
+                    "Use View \u203a Zoom \u203a Fit Page to see all."
+                )
+
+        # â”€â”€ History â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        if self.gen_options.save_to_history:
+            self.save_to_history(self.gen_options.prompt, width, height)
     
     # ==================== Configuration Management ====================
     
     def get_save_directory(self):
         """Get save directory from options or config."""
-        if self.options.save_directory and self.options.save_directory.strip():
-            return self.options.save_directory
+        if self.gen_options.save_directory and self.gen_options.save_directory.strip():
+            return self.gen_options.save_directory
         return self.get_config_value('default_save_directory', os.path.expanduser('~/Pictures/AI_Images'))
     
 
@@ -214,7 +256,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
             2. Environment variable (if use_env_key is True)
             3. Config file (if use_config_key is True)
             """
-            provider = self.options.provider
+            provider = self.gen_options.provider
 
 
             # Skip API key for local provider
@@ -222,28 +264,24 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 return ''
 
             # 1. Check direct input first
-            if self.options.api_key and self.options.api_key not in ['', 'sk-...', 'sk-your-key-here']:
+            if self.gen_options.api_key and self.gen_options.api_key not in ['', 'sk-...', 'sk-your-key-here']:
                 # Save to config if requested
-                if self.options.save_api_key:
+                if self.gen_options.save_api_key:
                     config_key = self.PROVIDERS.get(provider, {}).get('config_key', '')
                     if config_key:
-                        self.set_config_value(config_key, self.options.api_key)
-                return self.options.api_key
+                        self.set_config_value(config_key, self.gen_options.api_key)
+                return self.gen_options.api_key
             
             # 2. Check environment variable
-            if self.options.use_env_key:
+            if self.gen_options.use_env_key:
                 env_key = self.PROVIDERS.get(provider, {}).get('env_key', '')
-                inkex.errormsg(f"env_key ::  {env_key}")
-
                 if env_key:
-                    inkex.errormsg(f"env_key ::  {env_key}")
                     env_value = os.environ.get(env_key, '')
-                    inkex.errormsg(f"env_value ::  {env_value}")
                     if env_value:
                         return env_value
             
             # 3. Check config file
-            if self.options.use_config_key:
+            if self.gen_options.use_config_key:
                 config_key = self.PROVIDERS.get(provider, {}).get('config_key', '')
                 if config_key:
                     config_value = self.config.get(config_key, '')
@@ -257,19 +295,19 @@ class SVGLLMGenerator(inkex.EffectExtension):
 
     def save_svg_to_disk(self, image_data):
         """Save image data to disk."""
-        if not self.options.save_to_disk:
+        if not self.gen_options.save_to_disk:
             return None
         save_dir = self.get_save_directory()
         
         try:
             os.makedirs(save_dir, exist_ok=True)
-        except:
+        except Exception:
             inkex.errormsg(f"Could not create directory: {save_dir}")
             return None
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        seed_str = f"_seed{self.options.seed}" if self.options.seed != -1 else ""
-        filename = f"{self.options.filename_prefix}_{timestamp}{seed_str}.svg"
+        seed_str = f"_seed{self.gen_options.seed}" if self.gen_options.seed != -1 else ""
+        filename = f"{self.gen_options.filename_prefix}_{timestamp}{seed_str}.svg"
         filepath = os.path.join(save_dir, filename)
         
         try:
@@ -289,9 +327,9 @@ class SVGLLMGenerator(inkex.EffectExtension):
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except Exception:
                 pass
-        return {'api_keys': {}, 'last_provider': 'openai'}
+        return {}
     
     def save_config(self, config):
         """Save configuration."""
@@ -302,21 +340,128 @@ class SVGLLMGenerator(inkex.EffectExtension):
             inkex.errormsg(f"Warning: Could not save config: {e}")
     
     def save_api_key(self, api_key):
-        """Save API key for the current provider."""
+        """Save API key for the current provider using flat key schema."""
         config = self.load_config()
-        if 'api_keys' not in config:
-            config['api_keys'] = {}
-        config['api_keys'][self.options.provider] = api_key
-        config['last_provider'] = self.options.provider
+        config_key = self.PROVIDERS.get(self.gen_options.provider, {}).get('config_key', '')
+        if config_key:
+            config[config_key] = api_key
         self.save_config(config)
     
+    def get_config_value(self, key, default=None):
+        """Get a value from the loaded config."""
+        return self.config.get(key, default)
+
+    def set_config_value(self, key, value):
+        """Set a value in the config and persist it."""
+        self.config[key] = value
+        self.save_config(self.config)
+
+    def _get_layers(self):
+        """Return list of (id, label) tuples for all Inkscape layers in the document."""
+        layers = []
+        try:
+            for layer in self.svg.xpath(
+                '//svg:g[@inkscape:groupmode="layer"]',
+                namespaces=inkex.NSS
+            ):
+                layer_id = layer.get('id', '')
+                layer_label = layer.get(
+                    '{http://www.inkscape.org/namespaces/inkscape}label',
+                    layer_id
+                )
+                if layer_id:
+                    layers.append((layer_id, layer_label))
+        except Exception:
+            pass
+        return layers
+
+    def get_system_prompt(self):
+        """Return the system prompt to send to the model."""
+        if getattr(self.gen_options, 'use_custom_system_prompt', False) and \
+                getattr(self.gen_options, 'system_prompt', ''):
+            return self.gen_options.system_prompt
+        if self.prompt_loader:
+            return self.prompt_loader.get_system_prompt()
+        return (
+            "You are an expert SVG code generator. You only respond with valid, clean SVG code "
+            "without any explanation or markdown formatting. Never include ```svg or ``` markers. "
+            "Always produce well-formed, valid SVG."
+        )
+
+    def _auto_fit_page(self, width, height, variations):
+        """Expand the SVG page so all generated variations are visible."""
+        try:
+            doc_width = self.svg.viewport_width
+            doc_height = self.svg.viewport_height
+            total_w = variations * (width + 20) - 20
+            base_x = (doc_width - width) / 2  # leftmost variation start
+            right_edge = base_x + total_w + 20
+            bottom_edge = (doc_height - height) / 2 + height + 20
+            new_w = max(doc_width, right_edge)
+            new_h = max(doc_height, bottom_edge)
+            if new_w > doc_width or new_h > doc_height:
+                self.svg.set('width', f'{new_w}px')
+                self.svg.set('height', f'{new_h}px')
+                self.svg.set('viewBox', f'0 0 {new_w} {new_h}')
+                inkex.utils.debug(
+                    f"Page expanded to {new_w}Ã—{new_h}px to fit {variations} variation(s)."
+                )
+        except Exception as exc:
+            inkex.utils.debug(f"auto_fit_page: {exc}")
+
+    def _validate_model_for_provider(self):
+        """Warn if the selected model is not known for the selected provider."""
+        provider = self.gen_options.provider
+        model = self.gen_options.model
+        # Azure uses a custom deployment name â€” any value is valid
+        if provider == 'azure':
+            return
+        provider_models = self.PROVIDERS.get(provider, {}).get('models', [])
+        if provider_models and model not in provider_models:
+            inkex.errormsg(
+                f"Warning: '{model}' is not a known {provider} model. "
+                f"Expected one of: {', '.join(provider_models)}. Proceeding anyway."
+            )
+
+    def _get_target_layer(self):
+        """Return the layer element to place generated content on."""
+        lid = getattr(self.gen_options, 'target_layer', '')
+        if lid:
+            matches = self.svg.xpath(
+                f'//svg:g[@id="{lid}"]', namespaces=inkex.NSS
+            )
+            if matches:
+                return matches[0]
+        return self.svg.get_current_layer()
+
+    def _insert_image_link(self, filepath, width, height, offset_x=0, variation_num=1):
+        """Insert an SVG <image> element linking to an external SVG file."""
+        doc_width = self.svg.viewport_width
+        doc_height = self.svg.viewport_height
+        pos_x = (doc_width - width) / 2 + offset_x
+        pos_y = (doc_height - height) / 2
+        img = inkex.Image()
+        img.set('x', str(pos_x))
+        img.set('y', str(pos_y))
+        img.set('width', str(width))
+        img.set('height', str(height))
+        img.set('href', filepath)
+        if self.gen_options.add_group:
+            group = inkex.Group()
+            group_id = self.svg.get_unique_id(f'ai-linked-{variation_num}')
+            group.set('id', group_id)
+            group.append(img)
+            self._get_target_layer().append(group)
+        else:
+            self._get_target_layer().append(img)
+
     def load_history(self):
         """Load prompt history."""
         if os.path.exists(self.history_path):
             try:
                 with open(self.history_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except Exception:
                 pass
         return []
     
@@ -328,10 +473,10 @@ class SVGLLMGenerator(inkex.EffectExtension):
             'timestamp': datetime.now().isoformat(),
             'width': width,
             'height': height,
-            'provider': self.options.provider,
-            'model': self.options.model,
-            'style': self.options.style_hint,
-            'color_scheme': self.options.color_scheme
+            'provider': self.gen_options.provider,
+            'model': self.gen_options.model,
+            'style': self.gen_options.style_hint,
+            'color_scheme': self.gen_options.color_scheme
         }
         history.insert(0, entry)
         history = history[:self.MAX_HISTORY]  # Keep only last N entries
@@ -339,7 +484,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         try:
             with open(self.history_path, 'w', encoding='utf-8') as f:
                 json.dump(history, f, indent=2)
-        except:
+        except Exception:
             pass
     
     # ==================== Size Calculation ====================
@@ -362,11 +507,11 @@ class SVGLLMGenerator(inkex.EffectExtension):
             'icon': (1, 1)
         }
         
-        if self.options.size == 'custom':
-            return (self.options.custom_width, self.options.custom_height)
+        if self.gen_options.size == 'custom':
+            return (self.gen_options.custom_width, self.gen_options.custom_height)
         
-        base = base_sizes.get(self.options.size, 400)
-        ratio = aspect_ratios.get(self.options.aspect_ratio, (1, 1))
+        base = base_sizes.get(self.gen_options.size, 400)
+        ratio = aspect_ratios.get(self.gen_options.aspect_ratio, (1, 1))
         
         # Calculate dimensions maintaining aspect ratio
         if ratio[0] >= ratio[1]:
@@ -380,6 +525,27 @@ class SVGLLMGenerator(inkex.EffectExtension):
     
     # ==================== Selection Context ====================
     
+    def _get_selection_as_svg(self):
+        """Serialize selected elements to an SVG string for refine context."""
+        if not self.svg.selection:
+            return ""
+        try:
+            import lxml.etree as letree
+            parts = []
+            for elem in self.svg.selection.values():
+                parts.append(letree.tostring(elem, encoding='unicode', pretty_print=True))
+            if not parts:
+                return ""
+            width, height = self.get_size()
+            return (
+                f'<svg xmlns="http://www.w3.org/2000/svg" '
+                f'viewBox="0 0 {width} {height}">\n'
+                + "".join(parts)
+                + "\n</svg>"
+            )
+        except Exception:
+            return ""
+
     def get_selection_context(self):
         """Extract context from selected elements."""
         if not self.svg.selection:
@@ -438,86 +604,121 @@ class SVGLLMGenerator(inkex.EffectExtension):
         prompt_parts = []
         
         # Add preset context
-        preset_prompts = {
-            'icon': "Create a simple, recognizable icon suitable for UI/UX. Use clear shapes and minimal detail.",
-            'illustration': "Create an artistic illustration with visual appeal and appropriate detail.",
-            'diagram': "Create a clear, informative diagram with proper labels and connections.",
-            'pattern': "Create a seamless repeating pattern that tiles correctly.",
-            'logo': "Create a professional logo design that is scalable and memorable.",
-            'flowchart': "Create a flowchart with clear boxes, arrows, and labels.",
-            'infographic': "Create an informative graphic with data visualization elements."
-        }
-        
-        if self.options.prompt_preset != "none" and self.options.prompt_preset in preset_prompts:
-            prompt_parts.append(preset_prompts[self.options.prompt_preset])
+        if self.gen_options.prompt_preset != "none":
+            _preset_text = (
+                self.prompt_loader.get_preset(self.gen_options.prompt_preset)
+                if self.prompt_loader else None
+            )
+            if _preset_text:
+                prompt_parts.append(_preset_text)
         
         # Main prompt
-        prompt_parts.append(f"\nGenerate SVG code for: {self.options.prompt}")
+        prompt_parts.append(f"\nGenerate SVG code for: {self.gen_options.prompt}")
         prompt_parts.append(f"\nCanvas size: {width}x{height} pixels")
         
-        # Selection context
+        # Selection context (text description)
         if selection_context:
             prompt_parts.append(f"\n{selection_context}")
             prompt_parts.append("Try to match the style of the selected elements.")
+
+        # Refine mode â€” include raw SVG code of selection
+        if getattr(self.gen_options, 'include_selection_svg', False):
+            selected_svg = self._get_selection_as_svg()
+            if selected_svg:
+                prompt_parts.append(
+                    "\n\n=== EXISTING SVG (modify / refine this) ==="
+                )
+                prompt_parts.append(selected_svg)
+                prompt_parts.append("=== END EXISTING SVG ===")
+                prompt_parts.append(
+                    "Return the complete, updated SVG incorporating the changes "
+                    "described above. Keep unchanged elements intact."
+                )
         
         # Complexity
-        complexity_hints = {
-            'simple': 'Use minimal elements, basic shapes only. Maximum 10-15 elements.',
-            'medium': 'Use moderate complexity with some detail. Around 20-40 elements.',
-            'complex': 'Include rich detail and many elements. Can be intricate.'
-        }
-        if self.options.complexity in complexity_hints:
-            prompt_parts.append(f"\nComplexity: {complexity_hints[self.options.complexity]}")
+        _complexity_text = (
+            self.prompt_loader.get_complexity(self.gen_options.complexity)
+            if self.prompt_loader else None
+        )
+        if not _complexity_text:
+            _complexity_fallback = {
+                'simple': 'Use minimal elements, basic shapes only. Maximum 10-15 elements.',
+                'medium': 'Use moderate complexity with some detail. Around 20-40 elements.',
+                'complex': 'Include rich detail and many elements. Can be intricate.'
+            }
+            _complexity_text = _complexity_fallback.get(self.gen_options.complexity)
+        if _complexity_text:
+            prompt_parts.append(f"\nComplexity: {_complexity_text}")
         
         # Style hint
-        if self.options.style_hint != "none":
-            style_descriptions = {
-                'minimal': 'Use a minimal, clean design with simple shapes and whitespace',
-                'detailed': 'Include detailed elements and visual complexity',
-                'flat': 'Use flat design principles with solid colors, no shadows or gradients',
-                'outline': 'Use only outlines/strokes, no fills (line art style)',
-                'filled': 'Use filled shapes with no or minimal strokes',
-                'geometric': 'Use geometric shapes and mathematical patterns',
-                'organic': 'Use organic, natural flowing curves and shapes',
-                'hand_drawn': 'Give it a hand-drawn, sketchy appearance',
-                'isometric': 'Use isometric 3D perspective',
-                'cartoon': 'Use a cartoon/comic style with bold outlines'
-            }
-            prompt_parts.append(f"\nStyle: {style_descriptions.get(self.options.style_hint, '')}")
+        if self.gen_options.style_hint != "none":
+            _style_text = (
+                self.prompt_loader.get_style(self.gen_options.style_hint)
+                if self.prompt_loader else None
+            )
+            if not _style_text:
+                _style_fallback = {
+                    'minimal': 'Use a minimal, clean design with simple shapes and whitespace',
+                    'detailed': 'Include detailed elements and visual complexity',
+                    'flat': 'Use flat design principles with solid colors, no shadows or gradients',
+                    'outline': 'Use only outlines/strokes, no fills (line art style)',
+                    'filled': 'Use filled shapes with no or minimal strokes',
+                    'geometric': 'Use geometric shapes and mathematical patterns',
+                    'organic': 'Use organic, natural flowing curves and shapes',
+                    'hand_drawn': 'Give it a hand-drawn, sketchy appearance',
+                    'isometric': 'Use isometric 3D perspective',
+                    'cartoon': 'Use a cartoon/comic style with bold outlines'
+                }
+                _style_text = _style_fallback.get(self.gen_options.style_hint, '')
+            if _style_text:
+                prompt_parts.append(f"\nStyle: {_style_text}")
         
         # Color scheme
-        if self.options.color_scheme != "any":
-            color_descriptions = {
-                'monochrome': 'Use only one color in different shades/tints',
-                'warm': 'Use warm colors (reds, oranges, yellows, warm browns)',
-                'cool': 'Use cool colors (blues, greens, purples, teals)',
-                'pastel': 'Use soft pastel colors with low saturation',
-                'vibrant': 'Use bright, saturated, vibrant colors',
-                'grayscale': 'Use only black, white, and shades of gray',
-                'earth': 'Use earthy, natural tones (browns, greens, tans)',
-                'neon': 'Use bright neon/fluorescent colors',
-                'complementary': 'Use complementary color pairs for contrast'
-            }
-            prompt_parts.append(f"\nColor palette: {color_descriptions.get(self.options.color_scheme, '')}")
+        if self.gen_options.color_scheme != "any":
+            _color_text = (
+                self.prompt_loader.get_color(self.gen_options.color_scheme)
+                if self.prompt_loader else None
+            )
+            if not _color_text:
+                _color_fallback = {
+                    'monochrome': 'Use only one color in different shades/tints',
+                    'warm': 'Use warm colors (reds, oranges, yellows, warm browns)',
+                    'cool': 'Use cool colors (blues, greens, purples, teals)',
+                    'pastel': 'Use soft pastel colors with low saturation',
+                    'vibrant': 'Use bright, saturated, vibrant colors',
+                    'grayscale': 'Use only black, white, and shades of gray',
+                    'earth': 'Use earthy, natural tones (browns, greens, tans)',
+                    'neon': 'Use bright neon/fluorescent colors',
+                    'complementary': 'Use complementary color pairs for contrast'
+                }
+                _color_text = _color_fallback.get(self.gen_options.color_scheme, '')
+            if _color_text:
+                prompt_parts.append(f"\nColor palette: {_color_text}")
         
         # Stroke style
-        if self.options.stroke_style != "any":
-            stroke_hints = {
-                'thin': 'Use thin strokes (1-2px)',
-                'medium': 'Use medium strokes (2-4px)',
-                'thick': 'Use thick, bold strokes (4-8px)',
-                'none': 'Do not use strokes, only fills',
-                'variable': 'Use variable stroke widths for emphasis'
-            }
-            if self.options.stroke_style in stroke_hints:
-                prompt_parts.append(f"\nStrokes: {stroke_hints[self.options.stroke_style]}")
+        if self.gen_options.stroke_style != "any":
+            _stroke_text = (
+                self.prompt_loader.get_stroke(self.gen_options.stroke_style)
+                if self.prompt_loader else None
+            )
+            if not _stroke_text:
+                _stroke_fallback = {
+                    'thin': 'Use thin strokes (1-2px)',
+                    'medium': 'Use medium strokes (2-4px)',
+                    'thick': 'Use thick, bold strokes (4-8px)',
+                    'none': 'Do not use strokes, only fills',
+                    'variable': 'Use variable stroke widths for emphasis'
+                }
+                _stroke_text = _stroke_fallback.get(self.gen_options.stroke_style, '')
+            if _stroke_text:
+                prompt_parts.append(f"\nStrokes: {_stroke_text}")
         
         # Gradients
-        if not self.options.include_gradients:
+        if not self.gen_options.include_gradients:
             prompt_parts.append("\nDo NOT use gradients - solid colors only.")
         
         # Animations
-        if self.options.include_animations:
+        if self.gen_options.include_animations:
             prompt_parts.append("\nInclude subtle CSS or SMIL animations where appropriate.")
         
         # Technical instructions
@@ -533,40 +734,45 @@ class SVGLLMGenerator(inkex.EffectExtension):
             f"8. Valid elements: svg, g, path, rect, circle, ellipse, line, polyline, polygon, text, tspan, defs, use, clipPath, mask, linearGradient, radialGradient, stop"
         ])
         
-        if self.options.optimize_paths:
+        if self.gen_options.optimize_paths:
             prompt_parts.append("9. Optimize paths - use shorthand commands, remove unnecessary precision")
         
-        if self.options.add_accessibility:
+        if self.gen_options.add_accessibility:
             prompt_parts.append("10. Add <title> and <desc> elements for accessibility")
+
+        # Negative prompt
+        negative = getattr(self.gen_options, 'negative_prompt', '')
+        if negative and negative.strip():
+            prompt_parts.append(f"\n\nDo NOT include any of the following: {negative.strip()}")
         
         return "\n".join(prompt_parts)
     
     # ==================== API Calls ====================
     
     def call_api_with_retry(self, prompt, api_key, variation_index=0):
-        """Call API with retry logic."""
+        """Call API with retry logic and exponential back-off."""
         last_error = None
-        
-        for attempt in range(self.options.retry_count + 1):
+
+        for attempt in range(self.gen_options.retry_count + 1):
             try:
-                # Add variation hint if generating multiple
-                if self.options.variations > 1:
+                if self.gen_options.variations > 1:
                     variation_prompt = f"{prompt}\n\n(Variation {variation_index + 1} - create a unique interpretation)"
                 else:
                     variation_prompt = prompt
-                
+
                 return self.call_api(variation_prompt, api_key)
-                
+
             except Exception as e:
                 last_error = e
-                if attempt < self.options.retry_count:
-                    continue
-        
+                if attempt < self.gen_options.retry_count:
+                    inkex.utils.debug(f"API call failed (attempt {attempt+1}), retrying in {2**attempt}s...")
+                    time.sleep(2 ** attempt)
+
         raise last_error
     
     def call_api(self, prompt, api_key):
         """Route to appropriate API based on provider."""
-        provider = self.options.provider.lower()
+        provider = self.gen_options.provider.lower()
         
         if provider == "openai":
             return self.call_openai_api(prompt, api_key)
@@ -574,6 +780,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
             return self.call_anthropic_api(prompt, api_key)
         elif provider == "google":
             return self.call_google_api(prompt, api_key)
+        elif provider == "azure":
+            return self.call_azure_api(prompt, api_key)
         elif provider == "ollama":
             return self.call_ollama_api(prompt)
         else:
@@ -589,24 +797,24 @@ class SVGLLMGenerator(inkex.EffectExtension):
         }
         
         data = {
-            'model': self.options.model,
+            'model': self.gen_options.model,
             'messages': [
                 {
                     'role': 'system',
-                    'content': 'You are an expert SVG code generator. You only respond with valid, clean SVG code without any explanation or markdown formatting. Never include ```svg or ``` markers. Always produce well-formed, valid SVG.'
+                    'content': self.get_system_prompt()
                 },
                 {
                     'role': 'user',
                     'content': prompt
                 }
             ],
-            'temperature': self.options.temperature,
-            'max_tokens': self.options.max_tokens
+            'temperature': self.gen_options.temperature,
+            'max_tokens': self.gen_options.max_tokens
         }
         
         # Add seed if specified
-        if self.options.seed >= 0:
-            data['seed'] = self.options.seed
+        if self.gen_options.seed >= 0:
+            data['seed'] = self.gen_options.seed
         
         return self._make_api_request(url, headers, data)
     
@@ -621,17 +829,17 @@ class SVGLLMGenerator(inkex.EffectExtension):
         }
         
         # Map model names
-        model = self.options.model
+        model = self.gen_options.model
         if not model.startswith('claude'):
             model = 'claude-3-5-sonnet-20241022'  # Default Claude model
         
         data = {
             'model': model,
-            'max_tokens': self.options.max_tokens,
+            'max_tokens': self.gen_options.max_tokens,
             'messages': [
                 {
                     'role': 'user',
-                    'content': f"You are an expert SVG code generator. Generate ONLY valid SVG code without any explanation or markdown. Never include ```svg or ``` markers.\n\n{prompt}"
+                    'content': f"{self.get_system_prompt()}\n\n{prompt}"
                 }
             ]
         }
@@ -640,7 +848,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
     
     def call_google_api(self, prompt, api_key):
         """Call Google Gemini API to generate SVG code."""
-        model = self.options.model
+        model = self.gen_options.model
         if not model.startswith('gemini'):
             model = 'gemini-1.5-flash'  # Default Gemini model
         
@@ -650,75 +858,111 @@ class SVGLLMGenerator(inkex.EffectExtension):
             'Content-Type': 'application/json'
         }
         
+        generation_config = {
+            'temperature': self.gen_options.temperature,
+            'maxOutputTokens': self.gen_options.max_tokens
+        }
+        if self.gen_options.seed >= 0:
+            generation_config['seed'] = self.gen_options.seed
+
         data = {
             'contents': [{
                 'parts': [{
-                    'text': f"You are an expert SVG code generator. Generate ONLY valid SVG code without any explanation or markdown. Never include ```svg or ``` markers.\n\n{prompt}"
+                    'text': f"{self.get_system_prompt()}\n\n{prompt}"
                 }]
             }],
-            'generationConfig': {
-                'temperature': self.options.temperature,
-                'maxOutputTokens': self.options.max_tokens
-            }
+            'generationConfig': generation_config
         }
-        
+
         return self._make_api_request(url, headers, data, response_parser='google')
     
     def call_ollama_api(self, prompt):
         """Call local Ollama API to generate SVG code."""
-        endpoint = self.options.api_endpoint or "http://localhost:11434"
+        endpoint = (self.gen_options.api_endpoint or "http://localhost:11434").rstrip('/')
+        if not endpoint.startswith(('http://', 'https://')):
+            raise Exception(
+                f"Invalid Ollama endpoint: '{endpoint}'. Must start with http:// or https://"
+            )
         url = f"{endpoint}/api/generate"
-        
+
         headers = {
             'Content-Type': 'application/json'
         }
-        
-        model = self.options.model
+
+        model = self.gen_options.model
         if model.startswith('gpt') or model.startswith('claude') or model.startswith('gemini'):
-            model = 'llama3.1'  # Default Ollama model
-        
+            model = 'llama3.1'
+
+        ollama_options = {
+            'temperature': self.gen_options.temperature,
+            'num_predict': self.gen_options.max_tokens
+        }
+        if self.gen_options.seed >= 0:
+            ollama_options['seed'] = self.gen_options.seed
+
         data = {
             'model': model,
-            'prompt': f"You are an expert SVG code generator. Generate ONLY valid SVG code without any explanation or markdown. Never include ```svg or ``` markers.\n\n{prompt}",
+            'prompt': f"{self.get_system_prompt()}\n\n{prompt}",
             'stream': False,
-            'options': {
-                'temperature': self.options.temperature,
-                'num_predict': self.options.max_tokens
-            }
+            'options': ollama_options
         }
-        
-        return self._make_api_request(url, headers, data, response_parser='ollama', use_ssl=False)
-    
-    def _make_api_request(self, url, headers, data, response_parser='openai', use_ssl=True):
-        """Make HTTP request to API."""
+
+        return self._make_api_request(url, headers, data, response_parser='ollama')
+
+    def call_azure_api(self, prompt, api_key):
+        """Call Azure OpenAI API (same schema as OpenAI, different URL and auth header)."""
+        endpoint = (self.gen_options.api_endpoint or '').rstrip('/')
+        if not endpoint.startswith(('http://', 'https://')):
+            raise Exception(
+                "Azure OpenAI requires a valid endpoint URL in the 'Endpoint' field "
+                "(e.g. https://your-resource.openai.azure.com)"
+            )
+        deployment = self.gen_options.model  # deployment name = model name by convention
+        api_version = "2024-08-01-preview"
+        url = (
+            f"{endpoint}/openai/deployments/{deployment}"
+            f"/chat/completions?api-version={api_version}"
+        )
+        headers = {
+            'Content-Type': 'application/json',
+            'api-key': api_key,
+        }
+        data = {
+            'messages': [
+                {'role': 'system', 'content': self.get_system_prompt()},
+                {'role': 'user', 'content': prompt},
+            ],
+            'temperature': self.gen_options.temperature,
+            'max_tokens': self.gen_options.max_tokens,
+        }
+        if self.gen_options.seed >= 0:
+            data['seed'] = self.gen_options.seed
+        return self._make_api_request(url, headers, data)
+
+    def _make_api_request(self, url, headers, data, response_parser='openai'):
+        """Make HTTP request to API with certificate-verified SSL."""
         req = urllib.request.Request(
             url,
             data=json.dumps(data).encode('utf-8'),
             headers=headers,
             method='POST'
         )
-        
-        context = ssl._create_unverified_context() if use_ssl else None
-        
+
         try:
-            with urllib.request.urlopen(req, timeout=self.options.timeout, context=context) as response:
+            with urllib.request.urlopen(req, timeout=self.gen_options.timeout,
+                                        context=_SSL_CONTEXT) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 return self._parse_response(result, response_parser)
-        
+
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
             try:
                 error_data = json.loads(error_body)
-                if response_parser == 'anthropic':
-                    error_message = error_data.get('error', {}).get('message', str(e))
-                elif response_parser == 'google':
-                    error_message = error_data.get('error', {}).get('message', str(e))
-                else:
-                    error_message = error_data.get('error', {}).get('message', str(e))
-            except:
+                error_message = error_data.get('error', {}).get('message', str(e))
+            except Exception:
                 error_message = str(e)
             raise Exception(f"API Error ({e.code}): {error_message}")
-        
+
         except urllib.error.URLError as e:
             raise Exception(f"Network Error: {str(e)}")
     
@@ -745,10 +989,6 @@ class SVGLLMGenerator(inkex.EffectExtension):
         
         if not svg_code:
             raise Exception("No response from API")
-        
-        if self.options.save_to_disk:
-            self.save_svg_to_disk(svg_code)
-
 
         return self.clean_svg_response(svg_code)
     
@@ -806,9 +1046,9 @@ class SVGLLMGenerator(inkex.EffectExtension):
             doc_height = self.svg.viewport_height
             
             # Calculate position based on option
-            if self.options.position == "origin":
+            if self.gen_options.position == "origin":
                 pos_x, pos_y = 0, 0
-            elif self.options.position == "selection" and self.svg.selection:
+            elif self.gen_options.position == "selection" and self.svg.selection:
                 # Get selection bounding box
                 bbox = None
                 for elem in self.svg.selection.values():
@@ -832,12 +1072,12 @@ class SVGLLMGenerator(inkex.EffectExtension):
             pos_x += offset_x
             
             # Create a group if requested
-            if self.options.add_group:
+            if self.gen_options.add_group:
                 group = Group()
                 
                 # Set group ID
-                if self.options.group_name:
-                    group_id = f"{self.options.group_name}-{variation_num}" if self.options.variations > 1 else self.options.group_name
+                if self.gen_options.group_name:
+                    group_id = f"{self.gen_options.group_name}-{variation_num}" if self.gen_options.variations > 1 else self.gen_options.group_name
                 else:
                     group_id = self.svg.get_unique_id(f'ai-generated-{variation_num}')
                 
@@ -845,13 +1085,13 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 group.set('transform', f'translate({pos_x}, {pos_y})')
                 
                 # Add accessibility elements if requested
-                if self.options.add_accessibility:
+                if self.gen_options.add_accessibility:
                     title = inkex.Title()
-                    title.text = self.options.prompt[:100]
+                    title.text = self.gen_options.prompt[:100]
                     group.append(title)
                     
                     desc = inkex.Desc()
-                    desc.text = f"AI-generated SVG using {self.options.provider}/{self.options.model}"
+                    desc.text = f"AI-generated SVG using {self.gen_options.provider}/{self.gen_options.model}"
                     group.append(desc)
                 
                 # Import defs first if present
@@ -868,8 +1108,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
                         if new_elem is not None:
                             group.append(new_elem)
                 
-                # Add the group to current layer
-                self.svg.get_current_layer().append(group)
+                # Add the group to target layer
+                self._get_target_layer().append(group)
             else:
                 # Add elements directly with translation
                 for child in svg_root:
@@ -881,7 +1121,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
                         else:
                             new_elem.set('transform', f'translate({pos_x}, {pos_y})')
                         
-                        self.svg.get_current_layer().append(new_elem)
+                        self._get_target_layer().append(new_elem)
         
         except ET.ParseError as e:
             inkex.errormsg(f"Failed to parse SVG code: {str(e)}\n\nReceived code:\n{svg_code[:500]}...")
@@ -949,7 +1189,11 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 # Copy text content if any
                 if et_element.text and et_element.text.strip():
                     new_elem.text = et_element.text
-                
+
+                # Copy tail text (text after closing tag, relevant in <text> elements)
+                if et_element.tail and et_element.tail.strip():
+                    new_elem.tail = et_element.tail
+
                 # Recursively add children for container elements
                 container_tags = {'g', 'defs', 'clipPath', 'mask', 'symbol', 'marker', 
                                   'pattern', 'linearGradient', 'radialGradient', 'filter', 'text'}
@@ -969,11 +1213,13 @@ class SVGLLMGenerator(inkex.EffectExtension):
                         new_elem.set(key, value)
                     if et_element.text:
                         new_elem.text = et_element.text
+                    if et_element.tail and et_element.tail.strip():
+                        new_elem.tail = et_element.tail
                     return new_elem
-                except:
+                except Exception:
                     return None
-        
-        except Exception as e:
+
+        except Exception:
             # Silently skip problematic elements
             return None
 
