@@ -1,3 +1,5 @@
+<div align="center">
+
 # AI SVG Generator for Inkscape
 
 [![Inkscape](https://img.shields.io/badge/Inkscape-1.0+-blue.svg)](https://inkscape.org/)
@@ -7,6 +9,19 @@
 > **Generate stunning Scalable Vector Graphics using AI directly within Inkscape, powered by a modern Web GUI.**
 
 A powerful Inkscape extension that leverages cutting-edge AI providers (OpenAI, Anthropic Claude, Google Gemini, Local Ollama, and OpenRouter/Custom Servers) to generate beautiful vector graphics from text descriptions, directly onto your canvas.
+
+</div>
+
+## 📺 Demo
+
+<div align="center">
+
+[![Watch the Demo](https://img.youtube.com/vi/z-PGFjJGexs/maxresdefault.jpg)](https://www.youtube.com/watch?v=z-PGFjJGexs)
+
+*Click to watch the full tutorial on YouTube*
+
+</div>
+
 
 ---
 
