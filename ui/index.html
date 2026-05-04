@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI SVG Generator</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>AI SVG Generator</h1>
+            <p class="subtitle">Premium Vector Generation for Inkscape</p>
+        </header>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="generator">Generator</div>
+            <div class="tab" data-tab="setup">Setup & Model</div>
+            <div class="tab" data-tab="layout">Layout & Style</div>
+            <div class="tab" id="history-tab-btn" data-tab="history">History</div>
+        </div>
+
+        <form id="generator-form">
+            <!-- Generator Tab -->
+            <div id="tab-generator" class="tab-content">
+                <div class="form-group">
+                    <label for="prompt">What do you want to create?</label>
+                    <textarea id="prompt"
+                        placeholder="e.g. a minimalist new moon icon with crater details..."></textarea>
+                </div>
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="use_selection_context">
+                    <label for="use_selection_context">Use selected objects as context</label>
+                </div>
+                <div class="grid">
+                    <div class="form-group">
+                        <label for="prompt_preset">Preset</label>
+                        <select id="prompt_preset">
+                            <option value="none">None</option>
+                            <option value="icon">Icon</option>
+                            <option value="logo">Logo</option>
+                            <option value="illustration">Illustration</option>
+                            <option value="diagram">Diagram</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="style_hint">Style</label>
+                        <select id="style_hint">
+                            <option value="none">AI Decide</option>
+                            <option value="minimal">Minimal</option>
+                            <option value="flat">Flat Design</option>
+                            <option value="outline">Outline</option>
+                            <option value="detailed">Detailed</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Setup Tab -->
+            <div id="tab-setup" class="tab-content hidden">
+                <div class="form-group">
+                    <label for="provider">Service Provider</label>
+                    <select id="provider">
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="google">Google Gemini</option>
+                        <option value="ollama">Ollama (Local)</option>
+                        <option value="openai_compatible">OpenAI Compatible</option>
+                    </select>
+                </div>
+                <!-- Profiles Sub-Menu -->
+                <div class="form-group hidden" id="profile-group">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <label for="profile_select" style="margin-bottom: 0;">Profile</label>
+                        <button type="button" id="add-profile-btn"
+                            style="padding: 4px 12px; font-size: 11px; font-weight: 500; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 4px; color: white; cursor: pointer; transition: all 0.2s ease;">+
+                            Add New</button>
+                    </div>
+                    <div class="grid" style="grid-template-columns: 1fr auto; gap: 0;">
+                        <select id="profile_select" style="border-radius: 8px 0 0 8px;">
+                            <!-- Populated dynamically -->
+                        </select>
+                        <button type="button" id="del-profile-btn"
+                            style="padding: 0 15px; background: rgba(255,0,0,0.1); border: 1px solid var(--border-color); border-left: none; border-radius: 0 8px 8px 0; color: #ff6b6b; cursor: pointer; font-weight: 500; transition: all 0.2s ease;">Del</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="api_key">API Key</label>
+                    <input type="password" id="api_key" placeholder="sk-...">
+                </div>
+                <div class="form-group" id="endpoint-group">
+                    <label for="api_endpoint">API Endpoint</label>
+                    <input type="text" id="api_endpoint" placeholder="http://localhost:11434">
+                </div>
+                <div class="form-group hidden" id="manual-model-group">
+                    <label for="manual_model_name">Manual Model Name</label>
+                    <input type="text" id="manual_model_name" placeholder="e.g. llama3">
+                </div>
+                <div class="form-group">
+                    <label for="model">Model</label>
+                    <div class="grid" style="grid-template-columns: 1fr auto;">
+                        <input type="text" id="model" list="model-list" placeholder="Select or search model..."
+                            style="width: 100%;">
+                        <datalist id="model-list">
+                            <option value="gpt-4o">
+                        </datalist>
+                        <button type="button" id="sync-btn"
+                            style="padding: 0 15px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: 8px; color: white; cursor: pointer;">Sync</button>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 15px;">
+                    <label for="ui-backend-select">Window Type (UI Backend)</label>
+                    <select id="ui-backend-select" name="ui_backend">
+                        <option value="auto">Automatic (Recommended)</option>
+                        <option value="gtk">GTK+ Native (Linux)</option>
+                        <option value="webview">PyWebView Native</option>
+                        <option value="browser">System Default Browser</option>
+                    </select>
+                </div>
+
+                <button type="button" class="btn-secondary" id="save-setup-btn" style="margin-top: 15px;">Save
+                    Configuration</button>
+            </div>
+
+            <!-- Layout Tab -->
+            <div id="tab-layout" class="tab-content hidden">
+                <div class="grid">
+                    <div class="form-group">
+                        <label for="size">Size Preset</label>
+                        <select id="size">
+                            <option value="small">Small (200px)</option>
+                            <option value="medium">Medium (400px)</option>
+                            <option value="large">Large (600px)</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="aspect_ratio">Aspect Ratio</label>
+                        <select id="aspect_ratio">
+                            <option value="square">Square 1:1</option>
+                            <option value="landscape">Landscape 4:3</option>
+                            <option value="portrait">Portrait 3:4</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="position">Insertion Position</label>
+                        <select id="position">
+                            <option value="center">Page Center</option>
+                            <option value="origin">Page Origin (0,0)</option>
+                            <option value="selection">Beside Selection</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid">
+                    <div class="form-group">
+                        <label for="color_scheme">Color Scheme</label>
+                        <select id="color_scheme">
+                            <option value="any">Any</option>
+                            <option value="monochrome">Monochrome</option>
+                            <option value="vibrant">Vibrant</option>
+                            <option value="pastel">Pastel</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="stroke_style">Stroke</label>
+                        <select id="stroke_style">
+                            <option value="any">Any</option>
+                            <option value="thin">Thin</option>
+                            <option value="thick">Thick</option>
+                            <option value="none">None</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid">
+                    <div class="form-group">
+                        <label for="variations">Variations (1-4)</label>
+                        <input type="number" id="variations" min="1" max="4" value="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="retry_count">Max Retries</label>
+                        <input type="number" id="retry_count" min="0" max="5" value="2">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 15px;">
+                    <label for="temperature">Creativity (Temperature): <span id="temp-val">0.7</span></label>
+                    <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.7"
+                        style="width: 100%; accent-color: var(--accent-color); height: 6px; background: var(--input-bg); border-radius: 3px; cursor: pointer; margin-bottom: 5px;">
+                    <div
+                        style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-secondary);">
+                        <span>Focused</span>
+                        <span>Balanced</span>
+                        <span>Creative</span>
+                    </div>
+                </div>
+                <button type="button" class="btn-secondary" id="save-styles">Save Configuration</button>
+            </div>
+
+            <!-- History Tab -->
+            <div id="tab-history" class="tab-content hidden">
+                <div class="history-controls">
+                    <input type="text" id="history-search" placeholder="Search prompts...">
+                    <button type="button" id="clear-history-btn" class="btn-danger">Clear All</button>
+                </div>
+                <div id="history-list" class="history-list">
+                    <p class="empty-msg">No history yet. Generate something!</p>
+                </div>
+            </div>
+
+            <div id="action-area"
+                style="padding-top: 15px; border-top: 1px solid var(--border-color); margin-top: auto;">
+                <button type="submit" class="btn-primary" id="generate-btn">Generate Vector</button>
+                <div id="progress-container" class="hidden">
+                    <div class="progress-bar">
+                        <div id="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div id="progress-status">Preparing...</div>
+                </div>
+            </div>
+        </form>
+
+        <div id="status-msg" style="margin-top: 15px; font-size: 13px; text-align: center; color: var(--accent-color);">
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>

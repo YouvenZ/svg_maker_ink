@@ -1,2 +1,17 @@
 config.json
 svg_llm_history.json
+svg_maker.log
+
+# Python temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment and IDE
+.env
+.venv/
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.zip

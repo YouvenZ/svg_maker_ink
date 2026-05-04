@@ -1,9 +1,47 @@
 {
-    "openai_api_key": "sk-your-openai-api-key-here",
-    "anthropic_api_key": "sk-ant-your-anthropic-api-key-here",
-    "google_api_key": "your-google-api-key-here",
-    "default_provider": "openai",
-    "default_model": "gpt-4-turbo",
-    "default_size": "1024x1024",
-    "default_save_directory": "C:\\Users\\youve\\Pictures\\SVG_Images"
+    "provider_settings": {
+        "openai": {
+            "api_key": "sk-your-openai-api-key-here",
+            "model": "gpt-4o"
+        },
+        "anthropic": {
+            "api_key": "sk-ant-api03-your-anthropic-key-here",
+            "model": "claude-3-5-sonnet-20241022"
+        },
+        "google": {
+            "api_key": "AIzaSy-your-google-gemini-key-here",
+            "model": "gemini-1.5-pro"
+        },
+        "ollama": {
+            "api_endpoint": "http://localhost:11434",
+            "model": "llama3.1"
+        },
+        "openai_compatible": {
+            "api_key": "your-api-key-here",
+            "api_endpoint": "http://localhost:1234/v1",
+            "model": "your-model-name",
+            "manual_model_name": ""
+        },
+        "last_active_profile": "custom_openrouter",
+        "custom_openrouter": {
+            "api_key": "sk-or-v1-your-openrouter-key-here",
+            "api_endpoint": "https://openrouter.ai/api/v1",
+            "model": "anthropic/claude-3.5-sonnet",
+            "manual_model_name": ""
+        }
+    },
+    "custom_profiles": [
+        {
+            "id": "custom_openrouter",
+            "name": "OpenRouter"
+        }
+    ],
+    "layout_settings": {
+        "size": "medium",
+        "aspect_ratio": "1:1",
+        "retry_count": 2,
+        "position": "center",
+        "use_selection_context": false
+    },
+    "last_provider": "openai"
 }
