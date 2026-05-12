@@ -51,10 +51,12 @@ PROVIDERS = {
         'name': 'OpenAI',
         'env_key': 'OPENAI_API_KEY',
         'config_key': 'openai_api_key',
-        'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+        'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo',
+                   'o1', 'o1-mini', 'o3-mini'],
         'supports_seed': True,
         'needs_endpoint': False,
         'endpoint_placeholder': '',
+        'supports_fetch_models': True,
     },
     'anthropic': {
         'name': 'Anthropic Claude',
@@ -62,22 +64,27 @@ PROVIDERS = {
         'config_key': 'anthropic_api_key',
         'models': [
             'claude-opus-4-5',
+            'claude-sonnet-4-5',
             'claude-3-5-sonnet-20241022',
+            'claude-3-5-haiku-20241022',
             'claude-3-opus-20240229',
             'claude-3-haiku-20240307',
         ],
         'supports_seed': False,
         'needs_endpoint': False,
         'endpoint_placeholder': '',
+        'supports_fetch_models': True,
     },
     'google': {
         'name': 'Google Gemini',
         'env_key': 'GOOGLE_API_KEY',
         'config_key': 'google_api_key',
-        'models': ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+        'models': ['gemini-2.0-flash', 'gemini-2.0-flash-lite',
+                   'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'],
         'supports_seed': True,
         'needs_endpoint': False,
         'endpoint_placeholder': '',
+        'supports_fetch_models': True,
     },
     'azure': {
         'name': 'Azure OpenAI',
@@ -87,6 +94,7 @@ PROVIDERS = {
         'supports_seed': True,
         'needs_endpoint': True,
         'endpoint_placeholder': 'https://your-resource.openai.azure.com',
+        'supports_fetch_models': True,
     },
     'ollama': {
         'name': 'Ollama (Local)',
@@ -96,6 +104,17 @@ PROVIDERS = {
         'supports_seed': True,
         'needs_endpoint': True,
         'endpoint_placeholder': 'http://localhost:11434',
+        'supports_fetch_models': True,
+    },
+    'custom_openai': {
+        'name': 'Custom (OpenAI-compatible)',
+        'env_key': 'CUSTOM_OPENAI_API_KEY',
+        'config_key': 'custom_openai_api_key',
+        'models': ['custom-model'],
+        'supports_seed': True,
+        'needs_endpoint': True,
+        'endpoint_placeholder': 'http://localhost:1234/v1  or  https://api.groq.com/openai/v1',
+        'supports_fetch_models': True,
     },
 }
 
@@ -409,8 +428,27 @@ class SVGLLMDialog(Gtk.Window):
         self._ollama_status_label = Gtk.Label(label="", xalign=0)
         self._ollama_status_label.get_style_context().add_class("dim-label")
         model_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        model_box.pack_start(self._model_combo, True, True, 0)
+
+        # Row: combo + Refresh button
+        model_row_h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        model_row_h.pack_start(self._model_combo, True, True, 0)
+        self._refresh_models_btn = Gtk.Button(label="⟳ Refresh")
+        self._refresh_models_btn.set_tooltip_text(
+            "Fetch available models from the provider API"
+        )
+        self._refresh_models_btn.connect("clicked", self._on_refresh_models)
+        model_row_h.pack_start(self._refresh_models_btn, False, False, 0)
+
+        model_box.pack_start(model_row_h, True, True, 0)
         model_box.pack_start(self._ollama_status_label, False, False, 0)
+
+        # Custom model name entry (shown only for custom_openai)
+        self._custom_model_entry = Gtk.Entry()
+        self._custom_model_entry.set_placeholder_text("Enter model name, e.g. llama-3.3-70b-versatile")
+        self._custom_model_row = _make_row("Custom model name:", self._custom_model_entry)
+        self._custom_model_row.set_no_show_all(True)
+        model_box.pack_start(self._custom_model_row, False, False, 0)
+
         vbox.pack_start(_make_row("Model:", model_box), False, False, 0)
 
         self._populate_model_combo('openai')
@@ -787,6 +825,10 @@ class SVGLLMDialog(Gtk.Window):
                 "Anthropic does not support seed — this value is ignored."
             )
 
+        # Show/hide custom model name entry (only for custom_openai)
+        if hasattr(self, '_custom_model_row'):
+            self._custom_model_row.set_visible(provider == 'custom_openai')
+
         # P2-2: Auto-discover Ollama models
         if provider == 'ollama':
             self._discover_ollama_models()
@@ -1049,6 +1091,60 @@ class SVGLLMDialog(Gtk.Window):
         self._ollama_status_label.set_text(f"{len(models)} model(s) found")
         return False  # stop idle_add repeating
 
+    def _on_refresh_models(self, _btn):
+        """Fetch live model list from the selected provider."""
+        provider = self._provider_combo.get_active_id() or 'openai'
+        api_key = self._api_key_entry.get_text().strip()
+        endpoint = self._endpoint_entry.get_text().strip() if hasattr(self, '_endpoint_entry') else ''
+
+        self._ollama_status_label.set_text("Fetching models…")
+
+        # Map provider id to module name
+        _MODULE_MAP = {
+            'openai':       'svg_llm_openai',
+            'anthropic':    'svg_llm_anthropic',
+            'google':       'svg_llm_google',
+            'azure':        'svg_llm_azure',
+            'ollama':       'svg_llm_ollama',
+            'custom_openai':'svg_llm_custom',
+        }
+        module_name = _MODULE_MAP.get(provider)
+        if not module_name:
+            self._ollama_status_label.set_text(f"No fetch support for '{provider}'")
+            return
+
+        def _fetch():
+            try:
+                import importlib
+                mod = importlib.import_module(module_name)
+                models = mod.fetch_models(
+                    api_key=api_key,
+                    endpoint=endpoint,
+                    ssl_context=_SSL_CONTEXT,
+                )
+                if models:
+                    GLib.idle_add(self._apply_fetched_models, models)
+                else:
+                    GLib.idle_add(lambda: self._ollama_status_label.set_text(
+                        "No models returned — using defaults"
+                    ) or False)
+            except Exception as e:
+                GLib.idle_add(lambda: self._ollama_status_label.set_text(
+                    f"Error fetching models: {e}"
+                ) or False)
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _apply_fetched_models(self, models):
+        """Update model combo from a fetched model list (GTK main thread)."""
+        self._model_combo.remove_all()
+        for m in models:
+            self._model_combo.append(m, m)
+        if models:
+            self._model_combo.set_active(0)
+        self._ollama_status_label.set_text(f"{len(models)} model(s) loaded")
+        return False
+
     def _load_history_data(self):
         if os.path.exists(self.history_path):
             try:
@@ -1286,8 +1382,16 @@ class SVGLLMDialog(Gtk.Window):
         prompt = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
         save_dir = self._save_dir_entry.get_text().strip()
 
+        _selected_provider = self._provider_combo.get_active_id() or 'openai'
+        # For custom_openai allow the user to type an arbitrary model name
+        _selected_model = self._model_combo.get_active_id() or 'gpt-4o'
+        if _selected_provider == 'custom_openai':
+            _custom_name = self._custom_model_entry.get_text().strip()
+            if _custom_name:
+                _selected_model = _custom_name
+
         return GenerationOptions(
-            provider=self._provider_combo.get_active_id() or 'openai',
+            provider=_selected_provider,
             api_key=self._api_key_entry.get_text().strip(),
             use_env_key=self._use_env_key_check.get_active(),
             use_config_key=self._use_config_key_check.get_active(),
@@ -1296,7 +1400,7 @@ class SVGLLMDialog(Gtk.Window):
             prompt=prompt,
             prompt_preset=self._preset_combo.get_active_id() or 'none',
             use_selection_context=self._use_selection_check.get_active(),
-            model=self._model_combo.get_active_id() or 'gpt-4o',
+            model=_selected_model,
             temperature=self._temperature_spin.get_value(),
             max_tokens=int(self._max_tokens_spin.get_value()),
             timeout=int(self._timeout_spin.get_value()),

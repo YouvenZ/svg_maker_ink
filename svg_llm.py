@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Inkscape extension to generate SVG objects using multiple AI providers.
-Supports OpenAI, Anthropic, Google Gemini, and Ollama (local).
+Supports OpenAI, Anthropic, Google Gemini, Azure OpenAI, Ollama, and
+any custom OpenAI-compatible endpoint.
 """
 
 import inkex
@@ -19,6 +20,20 @@ try:
     from svg_llm_prompts import PromptLoader as _PromptLoader
 except Exception:
     _PromptLoader = None
+
+# ── Provider modules ──────────────────────────────────────────────────────────
+try:
+    import svg_llm_openai   as _prov_openai
+    import svg_llm_anthropic as _prov_anthropic
+    import svg_llm_google    as _prov_google
+    import svg_llm_ollama    as _prov_ollama
+    import svg_llm_azure     as _prov_azure
+    import svg_llm_custom    as _prov_custom
+    _PROVIDERS_LOADED = True
+except Exception as _prov_err:
+    _PROVIDERS_LOADED = False
+    _prov_openai = _prov_anthropic = _prov_google = None
+    _prov_ollama = _prov_azure = _prov_custom = None
 
 
 def _build_ssl_context():
@@ -49,55 +64,58 @@ class SVGLLMGenerator(inkex.EffectExtension):
     MAX_HISTORY = 50
     
     PROVIDERS = {
-    'openai': {
-        'name': 'OpenAI',
-        'generate_url': 'https://api.openai.com/v1/chat/completions',
-        'env_key': 'OPENAI_API_KEY',
-        'config_key': 'openai_api_key',
-        'models': ['gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
-        'sizes': ['1024x1024', '1024x1792', '1792x1024', '512x512', '256x256']
-    },
-    'anthropic': {
-        'name': 'Anthropic Claude',
-        'generate_url': 'https://api.anthropic.com/v1/messages',
-        'env_key': 'ANTHROPIC_API_KEY',
-        'config_key': 'anthropic_api_key',
-        'models': ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
-        'sizes': ['1024x1024']
-    },
-    'google': {
-        'name': 'Google Gemini',
-        'generate_url': 'https://generativelanguage.googleapis.com/v1beta/models',
-        'env_key': 'GOOGLE_API_KEY',
-        'config_key': 'google_api_key',
-        'models': ['gemini-1.5-pro', 'gemini-1.5-flash'],
-        'sizes': ['1024x1024']
-    },
-    'azure': {
-        'name': 'Azure OpenAI',
-        'generate_url': '',  # Constructed from endpoint at call time
-        'env_key': 'AZURE_OPENAI_API_KEY',
-        'config_key': 'azure_openai_api_key',
-        'models': ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
-        'sizes': ['1024x1024']
-    },
-    'ollama': {
-        'name': 'Ollama (Local)',
-        'generate_url': 'http://localhost:11434/api/generate',
-        'env_key': '',
-        'config_key': '',
-        'models': ['llama3.1', 'codellama', 'mistral'],
-        'sizes': ['1024x1024', '768x768', '512x512']
+        'openai': {
+            'name': 'OpenAI',
+            'env_key': 'OPENAI_API_KEY',
+            'config_key': 'openai_api_key',
+            'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo',
+                       'o1', 'o1-mini', 'o3-mini'],
+        },
+        'anthropic': {
+            'name': 'Anthropic Claude',
+            'env_key': 'ANTHROPIC_API_KEY',
+            'config_key': 'anthropic_api_key',
+            'models': ['claude-opus-4-5', 'claude-sonnet-4-5',
+                       'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
+        },
+        'google': {
+            'name': 'Google Gemini',
+            'env_key': 'GOOGLE_API_KEY',
+            'config_key': 'google_api_key',
+            'models': ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+        },
+        'azure': {
+            'name': 'Azure OpenAI',
+            'env_key': 'AZURE_OPENAI_API_KEY',
+            'config_key': 'azure_openai_api_key',
+            'models': ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
+        },
+        'ollama': {
+            'name': 'Ollama (Local)',
+            'env_key': '',
+            'config_key': '',
+            'models': ['llama3.2', 'llama3.1', 'qwen2.5-coder', 'codellama', 'mistral'],
+        },
+        'custom_openai': {
+            'name': 'Custom (OpenAI-compatible)',
+            'env_key': 'CUSTOM_OPENAI_API_KEY',
+            'config_key': 'custom_openai_api_key',
+            'models': ['custom-model'],
+        },
     }
-}
 
+
+    # Maximum SVG size (bytes) we will attempt to parse and insert
+    MAX_SVG_BYTES = 2 * 1024 * 1024  # 2 MB
 
     def __init__(self):
         super().__init__()
-        self.config_path = os.path.join(os.path.dirname(__file__), self.CONFIG_FILENAME)
-        self.history_path = os.path.join(os.path.dirname(__file__), self.HISTORY_FILENAME)
-        self.templates_path = os.path.join(os.path.dirname(__file__), self.TEMPLATES_FILENAME)
-        self.prompt_loader = _PromptLoader(os.path.dirname(__file__)) if _PromptLoader else None
+        # Use abspath so prompt files are always found regardless of cwd
+        _ext_dir = os.path.dirname(os.path.abspath(__file__))
+        self.config_path = os.path.join(_ext_dir, self.CONFIG_FILENAME)
+        self.history_path = os.path.join(_ext_dir, self.HISTORY_FILENAME)
+        self.templates_path = os.path.join(_ext_dir, self.TEMPLATES_FILENAME)
+        self.prompt_loader = _PromptLoader(_ext_dir) if _PromptLoader else None
     
     def effect(self):
         """Main effect function."""
@@ -413,8 +431,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
         """Warn if the selected model is not known for the selected provider."""
         provider = self.gen_options.provider
         model = self.gen_options.model
-        # Azure uses a custom deployment name â€” any value is valid
-        if provider == 'azure':
+        # Azure and custom_openai use user-defined names — always valid
+        if provider in ('azure', 'custom_openai'):
             return
         provider_models = self.PROVIDERS.get(provider, {}).get('models', [])
         if provider_models and model not in provider_models:
@@ -771,229 +789,64 @@ class SVGLLMGenerator(inkex.EffectExtension):
         raise last_error
     
     def call_api(self, prompt, api_key):
-        """Route to appropriate API based on provider."""
+        """Route to the appropriate provider module."""
         provider = self.gen_options.provider.lower()
-        
-        if provider == "openai":
-            return self.call_openai_api(prompt, api_key)
-        elif provider == "anthropic":
-            return self.call_anthropic_api(prompt, api_key)
-        elif provider == "google":
-            return self.call_google_api(prompt, api_key)
-        elif provider == "azure":
-            return self.call_azure_api(prompt, api_key)
-        elif provider == "ollama":
-            return self.call_ollama_api(prompt)
+        opts = {
+            'model':       self.gen_options.model,
+            'temperature': self.gen_options.temperature,
+            'max_tokens':  self.gen_options.max_tokens,
+            'timeout':     self.gen_options.timeout,
+            'seed':        self.gen_options.seed,
+            'endpoint':    self.gen_options.api_endpoint,
+        }
+        sys_prompt = self.get_system_prompt()
+
+        if not _PROVIDERS_LOADED:
+            return self._fallback_openai_call(prompt, sys_prompt, opts, api_key)
+
+        if provider == 'openai':
+            return _prov_openai.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
+        elif provider == 'anthropic':
+            return _prov_anthropic.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
+        elif provider == 'google':
+            return _prov_google.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
+        elif provider == 'ollama':
+            return _prov_ollama.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
+        elif provider == 'azure':
+            return _prov_azure.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
+        elif provider == 'custom_openai':
+            return _prov_custom.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
         else:
             raise Exception(f"Unknown provider: {provider}")
-    
-    def call_openai_api(self, prompt, api_key):
-        """Call OpenAI API to generate SVG code."""
-        url = "https://api.openai.com/v1/chat/completions"
-        
+
+    def _fallback_openai_call(self, prompt, system_prompt, opts, api_key):
+        """Minimal inline OpenAI call used when provider modules failed to import."""
+        import json as _json
+        url = 'https://api.openai.com/v1/chat/completions'
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}'
+            'Authorization': f'Bearer {api_key}',
         }
-        
         data = {
-            'model': self.gen_options.model,
+            'model': opts.get('model', 'gpt-4o'),
             'messages': [
-                {
-                    'role': 'system',
-                    'content': self.get_system_prompt()
-                },
-                {
-                    'role': 'user',
-                    'content': prompt
-                }
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user',   'content': prompt},
             ],
-            'temperature': self.gen_options.temperature,
-            'max_tokens': self.gen_options.max_tokens
+            'temperature': float(opts.get('temperature', 0.7)),
+            'max_tokens':  int(opts.get('max_tokens', 4000)),
         }
-        
-        # Add seed if specified
-        if self.gen_options.seed >= 0:
-            data['seed'] = self.gen_options.seed
-        
-        return self._make_api_request(url, headers, data)
-    
-    def call_anthropic_api(self, prompt, api_key):
-        """Call Anthropic Claude API to generate SVG code."""
-        url = "https://api.anthropic.com/v1/messages"
-        
-        headers = {
-            'Content-Type': 'application/json',
-            'x-api-key': api_key,
-            'anthropic-version': '2023-06-01'
-        }
-        
-        # Map model names
-        model = self.gen_options.model
-        if not model.startswith('claude'):
-            model = 'claude-3-5-sonnet-20241022'  # Default Claude model
-        
-        data = {
-            'model': model,
-            'max_tokens': self.gen_options.max_tokens,
-            'messages': [
-                {
-                    'role': 'user',
-                    'content': f"{self.get_system_prompt()}\n\n{prompt}"
-                }
-            ]
-        }
-        
-        return self._make_api_request(url, headers, data, response_parser='anthropic')
-    
-    def call_google_api(self, prompt, api_key):
-        """Call Google Gemini API to generate SVG code."""
-        model = self.gen_options.model
-        if not model.startswith('gemini'):
-            model = 'gemini-1.5-flash'  # Default Gemini model
-        
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        
-        headers = {
-            'Content-Type': 'application/json'
-        }
-        
-        generation_config = {
-            'temperature': self.gen_options.temperature,
-            'maxOutputTokens': self.gen_options.max_tokens
-        }
-        if self.gen_options.seed >= 0:
-            generation_config['seed'] = self.gen_options.seed
-
-        data = {
-            'contents': [{
-                'parts': [{
-                    'text': f"{self.get_system_prompt()}\n\n{prompt}"
-                }]
-            }],
-            'generationConfig': generation_config
-        }
-
-        return self._make_api_request(url, headers, data, response_parser='google')
-    
-    def call_ollama_api(self, prompt):
-        """Call local Ollama API to generate SVG code."""
-        endpoint = (self.gen_options.api_endpoint or "http://localhost:11434").rstrip('/')
-        if not endpoint.startswith(('http://', 'https://')):
-            raise Exception(
-                f"Invalid Ollama endpoint: '{endpoint}'. Must start with http:// or https://"
-            )
-        url = f"{endpoint}/api/generate"
-
-        headers = {
-            'Content-Type': 'application/json'
-        }
-
-        model = self.gen_options.model
-        if model.startswith('gpt') or model.startswith('claude') or model.startswith('gemini'):
-            model = 'llama3.1'
-
-        ollama_options = {
-            'temperature': self.gen_options.temperature,
-            'num_predict': self.gen_options.max_tokens
-        }
-        if self.gen_options.seed >= 0:
-            ollama_options['seed'] = self.gen_options.seed
-
-        data = {
-            'model': model,
-            'prompt': f"{self.get_system_prompt()}\n\n{prompt}",
-            'stream': False,
-            'options': ollama_options
-        }
-
-        return self._make_api_request(url, headers, data, response_parser='ollama')
-
-    def call_azure_api(self, prompt, api_key):
-        """Call Azure OpenAI API (same schema as OpenAI, different URL and auth header)."""
-        endpoint = (self.gen_options.api_endpoint or '').rstrip('/')
-        if not endpoint.startswith(('http://', 'https://')):
-            raise Exception(
-                "Azure OpenAI requires a valid endpoint URL in the 'Endpoint' field "
-                "(e.g. https://your-resource.openai.azure.com)"
-            )
-        deployment = self.gen_options.model  # deployment name = model name by convention
-        api_version = "2024-08-01-preview"
-        url = (
-            f"{endpoint}/openai/deployments/{deployment}"
-            f"/chat/completions?api-version={api_version}"
-        )
-        headers = {
-            'Content-Type': 'application/json',
-            'api-key': api_key,
-        }
-        data = {
-            'messages': [
-                {'role': 'system', 'content': self.get_system_prompt()},
-                {'role': 'user', 'content': prompt},
-            ],
-            'temperature': self.gen_options.temperature,
-            'max_tokens': self.gen_options.max_tokens,
-        }
-        if self.gen_options.seed >= 0:
-            data['seed'] = self.gen_options.seed
-        return self._make_api_request(url, headers, data)
-
-    def _make_api_request(self, url, headers, data, response_parser='openai'):
-        """Make HTTP request to API with certificate-verified SSL."""
         req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode('utf-8'),
-            headers=headers,
-            method='POST'
+            url, data=_json.dumps(data).encode(), headers=headers, method='POST'
         )
+        with urllib.request.urlopen(req, timeout=int(opts.get('timeout', 60)),
+                                    context=_SSL_CONTEXT) as r:
+            result = _json.loads(r.read().decode())
+        choices = result.get('choices', [])
+        if choices:
+            return choices[0]['message']['content'].strip()
+        raise Exception('No response from fallback OpenAI call')
 
-        try:
-            with urllib.request.urlopen(req, timeout=self.gen_options.timeout,
-                                        context=_SSL_CONTEXT) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                return self._parse_response(result, response_parser)
-
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8')
-            try:
-                error_data = json.loads(error_body)
-                error_message = error_data.get('error', {}).get('message', str(e))
-            except Exception:
-                error_message = str(e)
-            raise Exception(f"API Error ({e.code}): {error_message}")
-
-        except urllib.error.URLError as e:
-            raise Exception(f"Network Error: {str(e)}")
-    
-    def _parse_response(self, result, parser_type):
-        """Parse API response based on provider."""
-        svg_code = None
-        
-        if parser_type == 'openai':
-            if 'choices' in result and len(result['choices']) > 0:
-                svg_code = result['choices'][0]['message']['content'].strip()
-        
-        elif parser_type == 'anthropic':
-            if 'content' in result and len(result['content']) > 0:
-                svg_code = result['content'][0]['text'].strip()
-        
-        elif parser_type == 'google':
-            if 'candidates' in result and len(result['candidates']) > 0:
-                parts = result['candidates'][0].get('content', {}).get('parts', [])
-                if parts:
-                    svg_code = parts[0].get('text', '').strip()
-        
-        elif parser_type == 'ollama':
-            svg_code = result.get('response', '').strip()
-        
-        if not svg_code:
-            raise Exception("No response from API")
-
-        return self.clean_svg_response(svg_code)
-    
-    # ==================== SVG Processing ====================
-    
     def clean_svg_response(self, svg_code):
         """Clean up SVG code from API response."""
         # Remove markdown code blocks if present
@@ -1014,120 +867,191 @@ class SVGLLMGenerator(inkex.EffectExtension):
         return svg_code
     
     def validate_and_fix_svg(self, svg_code, width, height):
-        """Validate and attempt to fix common SVG issues."""
-        # Ensure it starts with <svg
+        """
+        Validate and fix common SVG issues.
+
+        Ensures:
+        - The code starts with <svg
+        - xmlns is present
+        - viewBox is set to "0 0 {width} {height}"
+        - width and height attributes are set to {width} and {height} (in px)
+          so the viewBox-to-pixel mapping is always 1:1 when imported.
+        """
         if not svg_code.startswith('<svg'):
-            # Try to extract SVG from response
             svg_match = re.search(r'<svg[^>]*>.*</svg>', svg_code, re.DOTALL)
             if svg_match:
                 svg_code = svg_match.group(0)
             else:
-                # Wrap content in SVG tags
-                svg_code = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}">{svg_code}</svg>'
-        
-        # Ensure xmlns is present
+                svg_code = (
+                    f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">' + svg_code + '</svg>'
+                )
+
         if 'xmlns=' not in svg_code:
             svg_code = svg_code.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"', 1)
-        
-        # Ensure viewBox is present
+
+        # Normalise viewBox to the target dimensions so elements always span 0..width, 0..height
         if 'viewBox=' not in svg_code:
             svg_code = svg_code.replace('<svg', f'<svg viewBox="0 0 {width} {height}"', 1)
-        
+
+        # Force width / height to match target so the viewBox ratio is 1:1
+        svg_code = re.sub(r'width="[^"]*"', f'width="{width}"', svg_code, count=1)
+        svg_code = re.sub(r'height="[^"]*"', f'height="{height}"', svg_code, count=1)
+        if 'width="' not in svg_code[:300]:
+            svg_code = svg_code.replace('<svg', f'<svg width="{width}" height="{height}"', 1)
+
         return svg_code
     
     def add_svg_to_document(self, svg_code, target_width, target_height, offset_x=0, variation_num=1):
-        """Parse SVG code and add it to the document."""
+        """
+        Parse SVG code and insert it into the Inkscape document.
+
+        Fixes applied:
+        - Guards against excessively large SVG strings that would crash ET.
+        - Computes a scale transform from the SVG viewBox to the target pixel size
+          so the result always fills the requested area regardless of what the AI
+          used as its own coordinate system.
+        - Centers correctly by reading the SVG viewBox origin, not just viewport_width.
+        """
+        # Guard against huge responses that could hang or crash
+        svg_bytes = len(svg_code.encode('utf-8'))
+        if svg_bytes > self.MAX_SVG_BYTES:
+            inkex.errormsg(
+                f"Generated SVG is very large ({svg_bytes // 1024} KB) and cannot be "
+                f"inserted safely. Try reducing complexity or max_tokens."
+            )
+            return
+
         try:
-            # Parse the SVG code
             svg_root = ET.fromstring(svg_code)
-            
-            # Get document dimensions
-            doc_width = self.svg.viewport_width
-            doc_height = self.svg.viewport_height
-            
-            # Calculate position based on option
+        except ET.ParseError as e:
+            inkex.errormsg(
+                f"Failed to parse generated SVG: {e}\n\n"
+                f"First 500 chars:\n{svg_code[:500]}"
+            )
+            return
+        except Exception as e:
+            inkex.errormsg(f"Unexpected error parsing SVG: {e}")
+            return
+
+        try:
+            # ── Compute scale from SVG viewBox to target size ─────────────
+            scale_x = scale_y = 1.0
+            vb_str = svg_root.get('viewBox', '').strip()
+            if vb_str:
+                parts = vb_str.split()
+                if len(parts) == 4:
+                    vb_w = float(parts[2])
+                    vb_h = float(parts[3])
+                    if vb_w > 0:
+                        scale_x = target_width  / vb_w
+                    if vb_h > 0:
+                        scale_y = target_height / vb_h
+            # Fall back to using explicit width/height attrs when no viewBox scaling
+            if scale_x == 1.0 and scale_y == 1.0:
+                svg_w_str = svg_root.get('width', '').rstrip('px')
+                svg_h_str = svg_root.get('height', '').rstrip('px')
+                try:
+                    svg_px_w = float(svg_w_str) if svg_w_str and not svg_w_str.endswith('%') else target_width
+                    svg_px_h = float(svg_h_str) if svg_h_str and not svg_h_str.endswith('%') else target_height
+                    if svg_px_w > 0:
+                        scale_x = target_width  / svg_px_w
+                    if svg_px_h > 0:
+                        scale_y = target_height / svg_px_h
+                except ValueError:
+                    pass
+
+            # ── Document position ─────────────────────────────────────────
+            # Use viewBox to get the true coordinate origin of the document
+            try:
+                doc_vb = self.svg.get_viewbox()
+                doc_origin_x = doc_vb[0]
+                doc_origin_y = doc_vb[1]
+                doc_w        = doc_vb[2]
+                doc_h        = doc_vb[3]
+            except Exception:
+                doc_origin_x = doc_origin_y = 0.0
+                doc_w = float(self.svg.viewport_width)
+                doc_h = float(self.svg.viewport_height)
+
             if self.gen_options.position == "origin":
-                pos_x, pos_y = 0, 0
+                pos_x = doc_origin_x
+                pos_y = doc_origin_y
             elif self.gen_options.position == "selection" and self.svg.selection:
-                # Get selection bounding box
                 bbox = None
                 for elem in self.svg.selection.values():
                     elem_bbox = elem.bounding_box()
                     if elem_bbox:
-                        if bbox is None:
-                            bbox = elem_bbox
-                        else:
-                            bbox = bbox | elem_bbox
+                        bbox = elem_bbox if bbox is None else (bbox | elem_bbox)
                 if bbox:
                     pos_x = bbox.right + 20
                     pos_y = bbox.top
                 else:
-                    pos_x = (doc_width - target_width) / 2
-                    pos_y = (doc_height - target_height) / 2
-            else:  # center
-                pos_x = (doc_width - target_width) / 2
-                pos_y = (doc_height - target_height) / 2
-            
-            # Apply offset for variations
+                    pos_x = doc_origin_x + (doc_w - target_width)  / 2
+                    pos_y = doc_origin_y + (doc_h - target_height) / 2
+            else:  # center (default)
+                pos_x = doc_origin_x + (doc_w - target_width)  / 2
+                pos_y = doc_origin_y + (doc_h - target_height) / 2
+
             pos_x += offset_x
-            
-            # Create a group if requested
+
+            # ── Build transform string ────────────────────────────────────
+            scale_part = (
+                f' scale({scale_x:.6g}, {scale_y:.6g})' if (scale_x != 1.0 or scale_y != 1.0) else ''
+            )
+            transform = f'translate({pos_x:.4g}, {pos_y:.4g}){scale_part}'
+
+            # ── Create / fill group ───────────────────────────────────────
             if self.gen_options.add_group:
                 group = Group()
-                
-                # Set group ID
                 if self.gen_options.group_name:
-                    group_id = f"{self.gen_options.group_name}-{variation_num}" if self.gen_options.variations > 1 else self.gen_options.group_name
+                    group_id = (
+                        f"{self.gen_options.group_name}-{variation_num}"
+                        if self.gen_options.variations > 1
+                        else self.gen_options.group_name
+                    )
                 else:
                     group_id = self.svg.get_unique_id(f'ai-generated-{variation_num}')
-                
                 group.set('id', group_id)
-                group.set('transform', f'translate({pos_x}, {pos_y})')
-                
-                # Add accessibility elements if requested
+                group.set('transform', transform)
+
                 if self.gen_options.add_accessibility:
                     title = inkex.Title()
                     title.text = self.gen_options.prompt[:100]
                     group.append(title)
-                    
                     desc = inkex.Desc()
-                    desc.text = f"AI-generated SVG using {self.gen_options.provider}/{self.gen_options.model}"
+                    desc.text = (
+                        f"AI-generated SVG using "
+                        f"{self.gen_options.provider}/{self.gen_options.model}"
+                    )
                     group.append(desc)
-                
-                # Import defs first if present
+
+                # Import <defs> first so gradient/clip IDs resolve
                 for child in svg_root:
                     tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
                     if tag == 'defs':
                         self.import_defs(child)
-                
-                # Import all other children from parsed SVG
+
                 for child in svg_root:
                     tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
                     if tag != 'defs':
                         new_elem = self.import_element(child)
                         if new_elem is not None:
                             group.append(new_elem)
-                
-                # Add the group to target layer
+
                 self._get_target_layer().append(group)
             else:
-                # Add elements directly with translation
                 for child in svg_root:
                     new_elem = self.import_element(child)
                     if new_elem is not None:
-                        existing_transform = new_elem.get('transform', '')
-                        if existing_transform:
-                            new_elem.set('transform', f'translate({pos_x}, {pos_y}) {existing_transform}')
-                        else:
-                            new_elem.set('transform', f'translate({pos_x}, {pos_y})')
-                        
+                        existing = new_elem.get('transform', '')
+                        new_elem.set(
+                            'transform',
+                            f'{transform} {existing}' if existing else transform,
+                        )
                         self._get_target_layer().append(new_elem)
-        
-        except ET.ParseError as e:
-            inkex.errormsg(f"Failed to parse SVG code: {str(e)}\n\nReceived code:\n{svg_code[:500]}...")
-            return
+
         except Exception as e:
-            inkex.errormsg(f"Error adding SVG to document: {str(e)}")
+            inkex.errormsg(f"Error inserting SVG into document: {e}")
             return
     
     def import_defs(self, defs_element):
