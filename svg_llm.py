@@ -62,6 +62,39 @@ class SVGLLMGenerator(inkex.EffectExtension):
     HISTORY_FILENAME = 'svg_llm_history.json'
     TEMPLATES_FILENAME = 'svg_llm_templates.json'
     MAX_HISTORY = 50
+
+    # Class-level constant avoids re-allocating this dict for every element imported
+    ELEMENT_MAP = {
+        'rect': inkex.Rectangle,
+        'circle': inkex.Circle,
+        'ellipse': inkex.Ellipse,
+        'line': inkex.Line,
+        'polyline': inkex.Polyline,
+        'polygon': inkex.Polygon,
+        'path': inkex.PathElement,
+        'text': inkex.TextElement,
+        'tspan': inkex.Tspan,
+        'g': inkex.Group,
+        'defs': inkex.Defs,
+        'use': inkex.Use,
+        'clipPath': inkex.ClipPath,
+        'mask': inkex.Mask,
+        'linearGradient': inkex.LinearGradient,
+        'radialGradient': inkex.RadialGradient,
+        'stop': inkex.Stop,
+        'image': inkex.Image,
+        'title': inkex.Title,
+        'desc': inkex.Desc,
+        'symbol': inkex.Symbol,
+        'marker': inkex.Marker,
+        'pattern': inkex.Pattern,
+        'filter': inkex.Filter,
+        'style': inkex.StyleElement,
+    }
+    CONTAINER_TAGS = frozenset({
+        'g', 'defs', 'clipPath', 'mask', 'symbol', 'marker',
+        'pattern', 'linearGradient', 'radialGradient', 'filter', 'text'
+    })
     
     PROVIDERS = {
         'openai': {
@@ -142,6 +175,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
             config_path=self.config_path,
             history_path=self.history_path,
             templates_path=self.templates_path,
+            prompt_loader=self.prompt_loader,
             has_selection=bool(self.svg.selection),
             layers=layers,
         )
@@ -190,13 +224,13 @@ class SVGLLMGenerator(inkex.EffectExtension):
         prog.start(gen_fn)
         prog.present()
         Gtk.main()
-        prog.destroy()
         if not prog._done_ok or prog.cancelled:
+            prog.destroy()
             return
         svg_results = prog.results
 
-        # â”€â”€ Process results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        inkex.utils.debug("Parsing and inserting generated SVG(s)â€¦")
+        # Process results (keep window visible to avoid blank-screen freeze)
+        prog.update_status("Processing results…")
         result_entries = []
         for i, (svg_code, error) in enumerate(svg_results):
             entry = {
@@ -209,11 +243,18 @@ class SVGLLMGenerator(inkex.EffectExtension):
             if error:
                 entry['error'] = error
                 result_entries.append(entry)
+                prog.append_log("Variation %d error: %s" % (i + 1, error))
                 continue
             if not svg_code:
                 entry['error'] = 'No SVG code returned by the model.'
                 result_entries.append(entry)
+                prog.append_log("Variation %d: empty response" % (i + 1,))
                 continue
+
+            prog.update_status("Inserting variation %d of %d…" % (i + 1, len(svg_results)))
+            # Drain pending GTK events so the status label renders before the insert
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
 
             svg_code = self.validate_and_fix_svg(svg_code, width, height)
             entry['svg_size'] = len(svg_code.encode('utf-8'))
@@ -230,7 +271,10 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 self.add_svg_to_document(svg_code, width, height, offset_x, variation_num=i + 1)
 
             entry['status'] = 'ok'
+            prog.append_log("Variation %d inserted (%d B)" % (i + 1, entry['svg_size']))
             result_entries.append(entry)
+
+        prog.destroy()
 
         # Show result summary dialog
         result_dlg = GenerationResultDialog(result_entries)
@@ -1070,39 +1114,9 @@ class SVGLLMGenerator(inkex.EffectExtension):
             # Get the tag name without namespace
             tag = et_element.tag.split('}')[-1] if '}' in et_element.tag else et_element.tag
             
-            # Extended element map
-            element_map = {
-                'rect': inkex.Rectangle,
-                'circle': inkex.Circle,
-                'ellipse': inkex.Ellipse,
-                'line': inkex.Line,
-                'polyline': inkex.Polyline,
-                'polygon': inkex.Polygon,
-                'path': inkex.PathElement,
-                'text': inkex.TextElement,
-                'tspan': inkex.Tspan,
-                'g': inkex.Group,
-                'defs': inkex.Defs,
-                'use': inkex.Use,
-                'clipPath': inkex.ClipPath,
-                'mask': inkex.Mask,
-                'linearGradient': inkex.LinearGradient,
-                'radialGradient': inkex.RadialGradient,
-                'stop': inkex.Stop,
-                'image': inkex.Image,
-                'title': inkex.Title,
-                'desc': inkex.Desc,
-                'symbol': inkex.Symbol,
-                'marker': inkex.Marker,
-                'pattern': inkex.Pattern,
-                'filter': inkex.Filter,
-                'style': inkex.StyleElement,
-            }
-            
-            # Create appropriate inkex element
-            if tag in element_map:
-                elem_class = element_map[tag]
-                new_elem = elem_class()
+            # Create appropriate inkex element (use class-level map — no per-call allocation)
+            if tag in self.ELEMENT_MAP:
+                new_elem = self.ELEMENT_MAP[tag]()
                 
                 # Copy all attributes
                 for key, value in et_element.attrib.items():
@@ -1119,9 +1133,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
                     new_elem.tail = et_element.tail
 
                 # Recursively add children for container elements
-                container_tags = {'g', 'defs', 'clipPath', 'mask', 'symbol', 'marker', 
-                                  'pattern', 'linearGradient', 'radialGradient', 'filter', 'text'}
-                if tag in container_tags:
+                if tag in self.CONTAINER_TAGS:
                     for child in et_element:
                         child_elem = self.import_element(child)
                         if child_elem is not None:

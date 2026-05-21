@@ -217,7 +217,7 @@ class SVGLLMDialog(Gtk.Window):
     """
 
     def __init__(self, config, history_path, templates_path="", config_path="",
-                 has_selection=False, layers=None):
+                 has_selection=False, layers=None, prompt_loader=None):
         super().__init__(title="AI SVG Generator")
         self.set_modal(True)
         self.set_keep_above(True)
@@ -226,6 +226,8 @@ class SVGLLMDialog(Gtk.Window):
         self.config_path = config_path
         self.history_path = history_path
         self.templates_path = templates_path
+        # Optional PromptLoader instance for reading markdown prompts/partials
+        self.prompt_loader = prompt_loader
         self.has_selection = has_selection
         self.layers = layers or []
         self.set_default_size(640, 560)
@@ -882,6 +884,15 @@ class SVGLLMDialog(Gtk.Window):
         hint = PRESET_HINTS.get(preset_id, '')
         if hasattr(self, '_preset_hint_label'):
             self._preset_hint_label.set_text(hint)
+        # Also load the preset markdown into the prompt text area when available
+        try:
+            if preset_id != 'none' and hasattr(self, 'prompt_loader') and self.prompt_loader:
+                preset_text = self.prompt_loader.get_preset(preset_id)
+                if preset_text:
+                    buf = self._prompt_text.get_buffer()
+                    buf.set_text(preset_text)
+        except Exception:
+            pass
 
     def _on_prompt_buffer_changed(self, buf):
         """Update character counter below the prompt text area."""
@@ -904,6 +915,34 @@ class SVGLLMDialog(Gtk.Window):
         self._discover_ollama_models()
         self._ollama_discover_timer_id = None
         return False  # do not repeat
+
+    def _on_use_custom_system_toggled(self, widget):
+        """Enable or disable the system prompt text area based on checkbox state.
+
+        When unchecked the extension will use the built-in/default system prompt
+        (loaded from the PromptLoader when available). When checked the text
+        area becomes editable so the user can provide a custom system prompt.
+        """
+        try:
+            use_custom = bool(widget.get_active())
+            # If not using custom, populate buffer with loader/default and disable
+            if not use_custom:
+                try:
+                    if hasattr(self, 'prompt_loader') and self.prompt_loader:
+                        txt = self.prompt_loader.get_system_prompt() or ''
+                    else:
+                        txt = ''
+                except Exception:
+                    txt = ''
+                buf = self._system_prompt_text.get_buffer()
+                if txt:
+                    buf.set_text(txt)
+                self._system_prompt_text.set_sensitive(False)
+            else:
+                # Allow editing when user opts in
+                self._system_prompt_text.set_sensitive(True)
+        except Exception:
+            pass
 
     def _on_history_search(self, entry):
         """Filter the history TreeView by the search query."""
@@ -1210,7 +1249,15 @@ class SVGLLMDialog(Gtk.Window):
         self._system_prompt_text = Gtk.TextView()
         self._system_prompt_text.set_wrap_mode(Gtk.WrapMode.WORD)
         self._system_prompt_text.set_accepts_tab(False)
-        self._system_prompt_text.get_buffer().set_text(DEFAULT_SYSTEM)
+        # Populate system prompt from PromptLoader when available, otherwise use DEFAULT_SYSTEM
+        try:
+            if hasattr(self, 'prompt_loader') and self.prompt_loader:
+                system_text = self.prompt_loader.get_system_prompt() or DEFAULT_SYSTEM
+            else:
+                system_text = DEFAULT_SYSTEM
+        except Exception:
+            system_text = DEFAULT_SYSTEM
+        self._system_prompt_text.get_buffer().set_text(system_text)
         sp_scroll = Gtk.ScrolledWindow()
         sp_scroll.set_min_content_height(90)
         sp_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -1220,6 +1267,11 @@ class SVGLLMDialog(Gtk.Window):
         self._use_custom_system_check = Gtk.CheckButton(
             label="Use the custom system prompt above (unchecked = default)"
         )
+        # Default to unchecked (use loader/default); toggle handler will manage sensitivity
+        self._use_custom_system_check.set_active(False)
+        self._use_custom_system_check.connect("toggled", self._on_use_custom_system_toggled)
+        # Set initial sensitivity according to the checkbox (unchecked => insensitive)
+        self._on_use_custom_system_toggled(self._use_custom_system_check)
         vbox.pack_start(self._use_custom_system_check, False, False, 0)
 
         vbox.pack_start(Gtk.Separator(), False, False, 6)
@@ -1714,16 +1766,34 @@ class GenerationProgressDialog(Gtk.Window):
         if not self.cancelled and not self._done:
             self._done = True
             self._done_ok = True
-            self._set_status("Done.")
+            self._status_lbl.set_text("Done — inserting SVG…")
             # Show copy / preview buttons if any SVG was generated
             successful = [svg for svg, err in self.results if svg and not err]
             if successful:
-                GLib.idle_add(lambda: (self._copy_btn.show(), False)[1])
+                self._copy_btn.show()
                 if _HAS_RSVG:
-                    GLib.idle_add(lambda: (self._preview_btn.show(), False)[1])
-            GLib.idle_add(lambda: self._cancel_btn.set_label("Close") or False)
-            GLib.idle_add(lambda: Gtk.main_quit() or False)
+                    self._preview_btn.show()
+            self._cancel_btn.set_label("Close")
+            # Quit the Gtk.main() loop directly — no extra idle needed
+            Gtk.main_quit()
         return False
+
+    # ── Public helpers called from effect() after Gtk.main() returns ─────────
+
+    def update_status(self, text):
+        """Update the status label from the main thread (no GTK loop needed)."""
+        try:
+            self._status_lbl.set_text(text)
+        except Exception:
+            pass
+
+    def append_log(self, text):
+        """Append a line to the log view from the main thread."""
+        try:
+            end = self._log_buf.get_end_iter()
+            self._log_buf.insert(end, text + "\n")
+        except Exception:
+            pass
 
     def _on_preview_svg(self, _btn):
         """Open SVGPreviewWindow for the last successfully generated SVG."""
