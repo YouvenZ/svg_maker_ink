@@ -21,11 +21,12 @@ Exposes:
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 from datetime import datetime
+
+from svg_llm_common import clean_svg_response
 
 PROVIDER_ID = 'claude_code'
 NAME = 'Claude Code (CLI)'
@@ -108,12 +109,13 @@ def _save_session_info(ext_dir, info):
         pass
 
 
-def generate(prompt, system_prompt, opts, api_key, ssl_context):
+def generate(prompt, system_prompt, opts, api_key, ssl_context, progress_cb=None):
     """
     Run `claude -p` in headless mode and return the raw text response.
 
     opts keys used: model, timeout, endpoint (= optional CLI path override)
     api_key and ssl_context are ignored — auth is Claude Code's own login.
+    progress_cb is accepted for interface parity but not used (no streaming).
     """
     cli = find_cli(opts.get('endpoint', ''))
 
@@ -174,7 +176,7 @@ def generate(prompt, system_prompt, opts, api_key, ssl_context):
         'timestamp': datetime.now().isoformat(),
     })
 
-    return _clean(text)
+    return clean_svg_response(text)
 
 
 def _parse_cli_output(stdout, stderr):
@@ -243,16 +245,3 @@ def ping(cli_override=''):
         )
     except Exception as exc:
         return False, f"Could not run Claude Code CLI: {exc}"
-
-
-def _clean(svg_code):
-    """Strip markdown fences / prose and isolate the SVG document."""
-    svg_code = re.sub(r'^```(?:svg|xml)?\s*\n?', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'\n?```\s*$', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'<\?xml[^>]+\?>\s*', '', svg_code)
-    svg_code = re.sub(r'<!DOCTYPE[^>]+>\s*', '', svg_code)
-    # If the model added any narration around the SVG, extract just the SVG
-    match = re.search(r'<svg[^>]*>.*</svg>', svg_code, re.DOTALL)
-    if match:
-        return match.group(0).strip()
-    return svg_code.strip()
