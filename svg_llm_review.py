@@ -36,7 +36,44 @@ try:
 except Exception:
     pass
 
+# Fallback: GdkPixbuf's SVG loader (present in Inkscape's Windows build,
+# where the Rsvg introspection typelib is NOT shipped)
+_HAS_PIXBUF_SVG = False
+try:
+    from gi.repository import GdkPixbuf as _GdkPixbuf  # type: ignore
+    _probe = _GdkPixbuf.PixbufLoader()
+    _probe.write(b'<svg xmlns="http://www.w3.org/2000/svg" '
+                 b'width="1" height="1"/>')
+    _probe.close()
+    _HAS_PIXBUF_SVG = _probe.get_pixbuf() is not None
+    del _probe
+except Exception:
+    _GdkPixbuf = None
+
 _THUMB_SIZE = 240
+
+
+def render_svg_pixbuf(svg_code, max_px):
+    """
+    Render SVG source to a GdkPixbuf scaled to fit max_px (aspect kept).
+    Returns None when the pixbuf SVG loader is unavailable or parsing fails.
+    """
+    if not _HAS_PIXBUF_SVG:
+        return None
+    try:
+        loader = _GdkPixbuf.PixbufLoader()
+
+        def _on_size(ldr, w, h):
+            if w > 0 and h > 0:
+                scale = min(max_px / w, max_px / h)
+                ldr.set_size(max(1, int(w * scale)), max(1, int(h * scale)))
+
+        loader.connect('size-prepared', _on_size)
+        loader.write(svg_code.encode('utf-8'))
+        loader.close()
+        return loader.get_pixbuf()
+    except Exception:
+        return None
 
 
 class _VariationCard(Gtk.Frame):
@@ -110,11 +147,18 @@ class _VariationCard(Gtk.Frame):
             except Exception:
                 self._handle = None
 
+        pixbuf = None
+        if ok and self._handle is None:
+            pixbuf = render_svg_pixbuf(svg_code, _THUMB_SIZE)
+
         if self._handle is not None:
             area = Gtk.DrawingArea()
             area.set_size_request(_THUMB_SIZE, _THUMB_SIZE)
             area.connect('draw', self._on_draw)
             self._thumb_container.pack_start(area, True, True, 0)
+        elif pixbuf is not None:
+            img = Gtk.Image.new_from_pixbuf(pixbuf)
+            self._thumb_container.pack_start(img, True, True, 0)
         elif ok:
             # No librsvg — show a source snippet instead
             buf = Gtk.TextBuffer()

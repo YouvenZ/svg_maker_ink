@@ -1483,6 +1483,16 @@ class SVGPreviewWindow(Gtk.Window):
             except Exception:
                 self._handle = None
 
+        pixbuf = None
+        if self._handle is None:
+            # Fallback renderer: GdkPixbuf's SVG loader (available in
+            # Inkscape's Windows build where the Rsvg typelib is missing)
+            try:
+                from svg_llm_review import render_svg_pixbuf
+                pixbuf = render_svg_pixbuf(self._svg_code, 520)
+            except Exception:
+                pixbuf = None
+
         if self._handle is not None:
             drawing_area = Gtk.DrawingArea()
             drawing_area.set_size_request(400, 400)
@@ -1490,6 +1500,12 @@ class SVGPreviewWindow(Gtk.Window):
             sw = Gtk.ScrolledWindow()
             sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
             sw.add(drawing_area)
+            preview_vbox.pack_start(sw, True, True, 0)
+        elif pixbuf is not None:
+            img = Gtk.Image.new_from_pixbuf(pixbuf)
+            sw = Gtk.ScrolledWindow()
+            sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            sw.add(img)
             preview_vbox.pack_start(sw, True, True, 0)
         else:
             lbl = Gtk.Label(
@@ -1751,8 +1767,9 @@ class GenerationProgressDialog(Gtk.Window):
             successful = [svg for svg, err in self.results if svg and not err]
             if successful:
                 self._copy_btn.show()
-                if _HAS_RSVG:
-                    self._preview_btn.show()
+                # SVGPreviewWindow renders via Rsvg or the GdkPixbuf SVG
+                # loader, and always offers the source tab — show it always.
+                self._preview_btn.show()
             self._cancel_btn.set_label("Close")
             # Quit the Gtk.main() loop directly — no extra idle needed
             Gtk.main_quit()
