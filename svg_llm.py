@@ -29,11 +29,13 @@ try:
     import svg_llm_ollama    as _prov_ollama
     import svg_llm_azure     as _prov_azure
     import svg_llm_custom    as _prov_custom
+    import svg_llm_claude_code as _prov_claude_code
     _PROVIDERS_LOADED = True
 except Exception as _prov_err:
     _PROVIDERS_LOADED = False
     _prov_openai = _prov_anthropic = _prov_google = None
     _prov_ollama = _prov_azure = _prov_custom = None
+    _prov_claude_code = None
 
 
 def _build_ssl_context():
@@ -134,6 +136,12 @@ class SVGLLMGenerator(inkex.EffectExtension):
             'env_key': 'CUSTOM_OPENAI_API_KEY',
             'config_key': 'custom_openai_api_key',
             'models': ['custom-model'],
+        },
+        'claude_code': {
+            'name': 'Claude Code (CLI)',
+            'env_key': '',
+            'config_key': '',
+            'models': ['default', 'opus', 'sonnet', 'haiku'],
         },
     }
 
@@ -321,8 +329,9 @@ class SVGLLMGenerator(inkex.EffectExtension):
             provider = self.gen_options.provider
 
 
-            # Skip API key for local provider
-            if provider == 'local':
+            # Skip API key for providers that authenticate on their own
+            # (Claude Code uses the CLI's own login)
+            if provider in ('local', 'claude_code'):
                 return ''
 
             # 1. Check direct input first
@@ -475,8 +484,9 @@ class SVGLLMGenerator(inkex.EffectExtension):
         """Warn if the selected model is not known for the selected provider."""
         provider = self.gen_options.provider
         model = self.gen_options.model
-        # Azure and custom_openai use user-defined names — always valid
-        if provider in ('azure', 'custom_openai'):
+        # Azure and custom_openai use user-defined names — always valid.
+        # Claude Code accepts aliases and any full model id the CLI supports.
+        if provider in ('azure', 'custom_openai', 'claude_code'):
             return
         provider_models = self.PROVIDERS.get(provider, {}).get('models', [])
         if provider_models and model not in provider_models:
@@ -860,6 +870,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
             return _prov_azure.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
         elif provider == 'custom_openai':
             return _prov_custom.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
+        elif provider == 'claude_code':
+            return _prov_claude_code.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
         else:
             raise Exception(f"Unknown provider: {provider}")
 

@@ -116,6 +116,16 @@ PROVIDERS = {
         'endpoint_placeholder': 'http://localhost:1234/v1  or  https://api.groq.com/openai/v1',
         'supports_fetch_models': True,
     },
+    'claude_code': {
+        'name': 'Claude Code (CLI)',
+        'env_key': '',
+        'config_key': '',
+        'models': ['default', 'opus', 'sonnet', 'haiku'],
+        'supports_seed': False,
+        'needs_endpoint': True,
+        'endpoint_placeholder': '(optional) full path to the claude CLI — leave blank to auto-detect',
+        'supports_fetch_models': True,
+    },
 }
 
 
@@ -831,6 +841,22 @@ class SVGLLMDialog(Gtk.Window):
         if hasattr(self, '_custom_model_row'):
             self._custom_model_row.set_visible(provider == 'custom_openai')
 
+        # API key is irrelevant for Claude Code (CLI auth) and Ollama
+        keyless = provider in ('claude_code', 'ollama')
+        self._api_key_entry.set_sensitive(not keyless)
+        self._api_key_entry.set_placeholder_text(
+            "Not needed — uses your Claude Code login" if provider == 'claude_code'
+            else "Not needed for local Ollama" if provider == 'ollama'
+            else "Paste key here — or leave blank to use env/config"
+        )
+        self._use_env_key_check.set_sensitive(not keyless)
+        self._use_config_key_check.set_sensitive(not keyless)
+        self._save_api_key_check.set_sensitive(not keyless)
+        if provider == 'claude_code':
+            self._test_key_btn.set_tooltip_text("Check that the Claude Code CLI is installed and reachable")
+        else:
+            self._test_key_btn.set_tooltip_text("")
+
         # P2-2: Auto-discover Ollama models
         if provider == 'ollama':
             self._discover_ollama_models()
@@ -963,7 +989,8 @@ class SVGLLMDialog(Gtk.Window):
     def _on_test_key(self, button):
         key = self._api_key_entry.get_text().strip()
         provider = self._provider_combo.get_active_id() or 'openai'
-        if not key:
+        # Claude Code and Ollama need no key — Test checks reachability instead
+        if not key and provider not in ('claude_code', 'ollama'):
             self._alert("No key entered. Enter an API key in the field above.")
             return
 
@@ -1035,6 +1062,10 @@ class SVGLLMDialog(Gtk.Window):
                 with urllib.request.urlopen(req, timeout=5, context=_SSL_CONTEXT) as r:
                     r.read()
                 return True, "Ollama reachable ✓"
+
+            elif provider == 'claude_code':
+                import svg_llm_claude_code as _cc
+                return _cc.ping(self._endpoint_entry.get_text().strip())
 
             else:
                 return False, f"No test defined for provider '{provider}'."
@@ -1146,6 +1177,7 @@ class SVGLLMDialog(Gtk.Window):
             'azure':        'svg_llm_azure',
             'ollama':       'svg_llm_ollama',
             'custom_openai':'svg_llm_custom',
+            'claude_code':  'svg_llm_claude_code',
         }
         module_name = _MODULE_MAP.get(provider)
         if not module_name:

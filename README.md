@@ -265,6 +265,26 @@ The extension automatically saves your prompts to `.svg_llm_history.json`:
 2. Select provider: **google**
 3. Recommended models: `gemini-1.5-flash`, `gemini-1.5-pro`
 
+### Claude Code (CLI) — no API key needed
+
+Bridges the extension to your local [Claude Code](https://claude.com/claude-code) installation.
+Generation runs through `claude -p` (headless mode) using your existing Claude Code
+login/subscription — **no API key required**.
+
+1. Install Claude Code and log in once (`claude` in a terminal)
+2. Select provider: **Claude Code (CLI)**
+3. Pick a model alias: `default` (your Claude Code default), `opus`, `sonnet`, or `haiku`
+4. Optional: if the `claude` command is not on PATH, put the full path to the
+   executable in the **Endpoint** field (otherwise it is auto-detected)
+5. Click **Test** to verify the CLI is reachable, then prompt away
+
+All presets, styles, color schemes, sizes, and the refine-selection workflow work
+exactly the same as with API providers — the plugin builds the prompt and Claude Code
+does the generation. The last session id is saved to `claude_code_session.json`.
+
+> 💡 Claude Code turns can take longer than raw API calls — the provider enforces a
+> minimum 120s timeout; raise the timeout in the Advanced tab for complex prompts.
+
 ### Ollama (Local)
 
 1. Install Ollama from [ollama.com](https://ollama.com/)
