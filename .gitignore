@@ -2,7 +2,6 @@ config.json
 svg_llm_history.json
 .svg_llm_history.json
 svg_llm_templates.json
-claude_code_session.json
 __pycache__/
 *.pyc
 PLAN.md

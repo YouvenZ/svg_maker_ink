@@ -35,13 +35,11 @@ try:
     import svg_llm_ollama    as _prov_ollama
     import svg_llm_azure     as _prov_azure
     import svg_llm_custom    as _prov_custom
-    import svg_llm_claude_code as _prov_claude_code
     _PROVIDERS_LOADED = True
 except Exception as _prov_err:
     _PROVIDERS_LOADED = False
     _prov_openai = _prov_anthropic = _prov_google = None
     _prov_ollama = _prov_azure = _prov_custom = None
-    _prov_claude_code = None
 
 
 _SSL_CONTEXT = _build_ssl_context()
@@ -324,8 +322,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
             provider = self.gen_options.provider
 
 
-            # Skip API key for providers that need none (local Ollama,
-            # Claude Code's own CLI login)
+            # Skip API key for providers that need none (local Ollama)
             if self.PROVIDERS.get(provider, {}).get('keyless'):
                 return ''
 
@@ -480,8 +477,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         provider = self.gen_options.provider
         model = self.gen_options.model
         # Azure and custom_openai use user-defined names — always valid.
-        # Claude Code accepts aliases and any full model id the CLI supports.
-        if provider in ('azure', 'custom_openai', 'claude_code'):
+        if provider in ('azure', 'custom_openai'):
             return
         provider_models = self.PROVIDERS.get(provider, {}).get('models', [])
         if provider_models and model not in provider_models:
@@ -863,7 +859,6 @@ class SVGLLMGenerator(inkex.EffectExtension):
             'ollama':        _prov_ollama,
             'azure':         _prov_azure,
             'custom_openai': _prov_custom,
-            'claude_code':   _prov_claude_code,
         }
         mod = modules.get(provider)
         if mod is None:

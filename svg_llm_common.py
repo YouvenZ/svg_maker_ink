@@ -116,19 +116,6 @@ PROVIDERS = {
         'supports_stream': True,
         'keyless': False,
     },
-    'claude_code': {
-        'name': 'Claude Code (CLI)',
-        'module': 'svg_llm_claude_code',
-        'env_key': '',
-        'config_key': '',
-        'models': ['default', 'opus', 'sonnet', 'haiku'],
-        'supports_seed': False,
-        'needs_endpoint': True,
-        'endpoint_placeholder': '(optional) full path to the claude CLI — leave blank to auto-detect',
-        'supports_fetch_models': True,
-        'supports_stream': False,
-        'keyless': True,
-    },
 }
 
 

@@ -683,7 +683,7 @@ class SVGLLMDialog(Gtk.Window):
         sections = [
             ("Getting Started", [
                 "1. Choose a provider (OpenAI, Anthropic, Google, Azure,",
-                "   Ollama, a custom OpenAI-compatible server, or Claude Code)",
+                "   Ollama, or a custom OpenAI-compatible server)",
                 "2. Enter your API key — or set the environment variable and check the box",
                 "3. Describe what you want to create in the Prompt tab",
                 "4. Adjust Style, Size, and Output options as needed",
@@ -703,7 +703,6 @@ class SVGLLMDialog(Gtk.Window):
                 "• Google:      https://aistudio.google.com/apikey",
                 "• Azure:       your Azure OpenAI resource key + endpoint",
                 "• Ollama:      no key — runs locally on your machine",
-                "• Claude Code: no key — uses your Claude Code login",
                 "Keys saved to config.json are stored as plain text.",
             ]),
             ("Example Prompts", [
@@ -724,8 +723,7 @@ class SVGLLMDialog(Gtk.Window):
                 "• Use the History tab to replay and refine past prompts",
                 "• Variations are generated in parallel — 4 costs the same",
                 "  wall-clock time as 1",
-                "• API usage costs apply for cloud providers (not Ollama or",
-                "  Claude Code subscriptions)",
+                "• API usage costs apply for cloud providers (not local Ollama)",
                 "• Prompts in prompts/*.md are editable — customize styles,",
                 "  presets, and the system prompt without touching code",
             ]),
@@ -773,21 +771,17 @@ class SVGLLMDialog(Gtk.Window):
         if hasattr(self, '_custom_model_row'):
             self._custom_model_row.set_visible(provider == 'custom_openai')
 
-        # API key is irrelevant for Claude Code (CLI auth) and Ollama
-        keyless = provider in ('claude_code', 'ollama')
+        # API key is irrelevant for local Ollama
+        keyless = PROVIDERS.get(provider, {}).get('keyless', False)
         self._api_key_entry.set_sensitive(not keyless)
         self._api_key_entry.set_placeholder_text(
-            "Not needed — uses your Claude Code login" if provider == 'claude_code'
-            else "Not needed for local Ollama" if provider == 'ollama'
+            "Not needed for local Ollama" if keyless
             else "Paste key here — or leave blank to use env/config"
         )
         self._use_env_key_check.set_sensitive(not keyless)
         self._use_config_key_check.set_sensitive(not keyless)
         self._save_api_key_check.set_sensitive(not keyless)
-        if provider == 'claude_code':
-            self._test_key_btn.set_tooltip_text("Check that the Claude Code CLI is installed and reachable")
-        else:
-            self._test_key_btn.set_tooltip_text("")
+        self._test_key_btn.set_tooltip_text("")
 
         # P2-2: Auto-discover Ollama models
         if provider == 'ollama':
@@ -921,8 +915,8 @@ class SVGLLMDialog(Gtk.Window):
     def _on_test_key(self, button):
         key = self._api_key_entry.get_text().strip()
         provider = self._provider_combo.get_active_id() or 'openai'
-        # Claude Code and Ollama need no key — Test checks reachability instead
-        if not key and provider not in ('claude_code', 'ollama'):
+        # Ollama needs no key — Test checks reachability instead
+        if not key and provider != 'ollama':
             self._alert("No key entered. Enter an API key in the field above.")
             return
 
@@ -986,10 +980,6 @@ class SVGLLMDialog(Gtk.Window):
                 with urllib.request.urlopen(req, timeout=5, context=_SSL_CONTEXT) as r:
                     r.read()
                 return True, "Ollama reachable ✓"
-
-            elif provider == 'claude_code':
-                import svg_llm_claude_code as _cc
-                return _cc.ping(self._endpoint_entry.get_text().strip())
 
             else:
                 return False, f"No test defined for provider '{provider}'."
@@ -1153,6 +1143,8 @@ class SVGLLMDialog(Gtk.Window):
     def _load_defaults_from_config(self):
         """Pre-populate fields from saved config.json values."""
         provider = self.config.get('default_provider', 'openai')
+        if provider not in PROVIDERS:
+            provider = 'openai'  # e.g. a removed provider saved in config.json
         self._provider_combo.set_active_id(provider)
 
         save_dir = self.config.get('default_save_directory', '')

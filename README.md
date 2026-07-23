@@ -10,7 +10,7 @@
 
 An Inkscape extension that turns text descriptions into vector graphics using
 OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, local Ollama models,
-any custom OpenAI-compatible server, or your Claude Code subscription —
+or any custom OpenAI-compatible server —
 with a review-first gallery so nothing lands on your canvas until you approve it.
 
 </div>
@@ -39,7 +39,6 @@ with a review-first gallery so nothing lands on your canvas until you approve it
   | Azure OpenAI | API key + endpoint | Your own deployments |
   | Ollama | none (local) | Any locally installed model |
   | Custom (OpenAI-compatible) | optional key + endpoint | LM Studio, vLLM, Groq, Together, DeepSeek… |
-  | Claude Code (CLI) | none — uses your Claude Code login | No API key needed |
 
 - **🖼️ Review-first workflow** — after generation, a gallery shows every
   variation rendered. Check what you want, **Refine** with a follow-up
@@ -103,7 +102,7 @@ library. `librsvg` (bundled with Inkscape) enables thumbnail previews.
 ## 🎯 Quick Start
 
 1. **Extensions → Generate → AI SVG Generator**
-2. Pick a provider and paste an API key (or use Ollama / Claude Code — no key)
+2. Pick a provider and paste an API key (or use local Ollama — no key)
 3. Type a prompt: `A simple house icon with a chimney`
 4. Click **Generate**
 5. In the review gallery: refine if needed, check the variations you like,
@@ -174,7 +173,6 @@ To restore the old auto-insert behaviour (e.g. for scripted use), set
 | `config.json` | Saved keys and defaults |
 | `svg_llm_history.json` | Prompt history (last 50) |
 | `svg_llm_templates.json` | Named prompt templates |
-| `claude_code_session.json` | Last Claude Code session id |
 
 All are gitignored and stay on your machine.
 
@@ -211,21 +209,6 @@ Select provider **Ollama** — installed models are auto-discovered. No key.
 Point the Endpoint field at any `/v1`-style base URL:
 `http://localhost:1234/v1` (LM Studio), `https://api.groq.com/openai/v1`, etc.
 Type the model name in the *Custom model name* field.
-
-### Claude Code (CLI) — no API key needed
-Uses your local [Claude Code](https://claude.com/claude-code) install and
-login/subscription via `claude -p` headless mode.
-
-1. Install Claude Code and log in once (`claude` in a terminal)
-2. Select provider **Claude Code (CLI)** and a model alias
-   (`default`, `opus`, `sonnet`, `haiku`)
-3. If `claude` is not on PATH, put the executable's full path in the
-   Endpoint field
-4. **Test** verifies the CLI is reachable
-
-> 💡 Claude Code turns can take longer than raw API calls — the provider
-> enforces a minimum 120 s timeout; raise it in the Model tab for complex
-> prompts.
 
 ---
 
@@ -327,7 +310,6 @@ svg_maker/
 ├── svg_llm_azure.py
 ├── svg_llm_ollama.py
 ├── svg_llm_custom.py
-├── svg_llm_claude_code.py
 ├── prompts/                 # Editable prompt fragments (markdown)
 ├── test_svg_generation.py   # Self-tests + live smoke test
 └── example_config.json      # Config template
@@ -370,7 +352,6 @@ MIT — see the `license` file.
 ### v2.0.0 (2026-07)
 - ✨ **Review-first workflow**: gallery with thumbnails, per-variation
   insert, iterative Refine, Regenerate — nothing auto-inserts
-- ✨ Claude Code (CLI) provider — generate with your subscription, no API key
 - ✨ Parallel variation generation + streaming progress + instant Cancel
 - ✨ SVG sanitization (scripts/handlers/foreignObject stripped)
 - ✨ Current model support: Claude Opus 4.8/Sonnet 5, GPT-5.x/o-series
