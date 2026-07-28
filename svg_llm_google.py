@@ -5,26 +5,20 @@ Google Gemini provider for AI SVG Generator.
 Exposes:
   PROVIDER_ID, NAME, ENV_KEY, CONFIG_KEY, DEFAULT_MODELS,
   NEEDS_ENDPOINT, ENDPOINT_PLACEHOLDER, SUPPORTS_SEED
-  generate(prompt, system_prompt, opts, api_key, ssl_context) -> str
+  generate(prompt, system_prompt, opts, api_key, ssl_context,
+           progress_cb=None) -> str
   fetch_models(api_key, endpoint='', ssl_context=None) -> list[str]
 """
 
-import json
-import urllib.request
-import urllib.error
-import re
+from svg_llm_common import (
+    PROVIDERS, clean_svg_response, http_get_json, http_post_json,
+)
 
 PROVIDER_ID = 'google'
-NAME = 'Google Gemini'
-ENV_KEY = 'GOOGLE_API_KEY'
-CONFIG_KEY = 'google_api_key'
-DEFAULT_MODELS = [
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-]
+NAME = PROVIDERS['google']['name']
+ENV_KEY = PROVIDERS['google']['env_key']
+CONFIG_KEY = PROVIDERS['google']['config_key']
+DEFAULT_MODELS = PROVIDERS['google']['models']
 NEEDS_ENDPOINT = False
 ENDPOINT_PLACEHOLDER = ''
 SUPPORTS_SEED = True
@@ -32,15 +26,20 @@ SUPPORTS_SEED = True
 _BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 
 
-def generate(prompt: str, system_prompt: str, opts: dict, api_key: str, ssl_context) -> str:
+def generate(prompt: str, system_prompt: str, opts: dict, api_key: str,
+             ssl_context, progress_cb=None) -> str:
     """
     Call the Google Gemini generateContent API and return the raw response text.
 
     opts keys used: model, temperature, max_tokens, timeout, seed
+    progress_cb is accepted for interface parity but streaming is not used.
     """
-    model = opts.get('model', 'gemini-2.0-flash')
+    model = opts.get('model', 'gemini-2.5-flash')
     if not model.startswith('gemini'):
-        model = 'gemini-2.0-flash'
+        raise Exception(
+            f"'{model}' is not a Gemini model. Pick a gemini-* model in "
+            "the Model tab (use ⟳ Refresh to fetch the current list)."
+        )
 
     url = f'{_BASE_URL}/models/{model}:generateContent?key={api_key}'
     headers = {'Content-Type': 'application/json'}
@@ -63,32 +62,15 @@ def generate(prompt: str, system_prompt: str, opts: dict, api_key: str, ssl_cont
         'generationConfig': generation_config,
     }
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode('utf-8'),
-        headers=headers,
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=int(opts.get('timeout', 60)),
-                                    context=ssl_context) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            candidates = result.get('candidates', [])
-            if candidates:
-                parts = candidates[0].get('content', {}).get('parts', [])
-                if parts:
-                    return _clean(parts[0].get('text', '').strip())
-            raise Exception('No content in Gemini response')
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        try:
-            err = json.loads(body)
-            msg = err.get('error', {}).get('message', str(e))
-        except Exception:
-            msg = body[:300]
-        raise Exception(f'Gemini API error ({e.code}): {msg}')
-    except urllib.error.URLError as e:
-        raise Exception(f'Gemini network error: {e.reason}')
+    result = http_post_json(url, headers, data, int(opts.get('timeout', 60)),
+                            ssl_context, 'Gemini')
+    candidates = result.get('candidates', [])
+    if candidates:
+        parts = candidates[0].get('content', {}).get('parts', [])
+        text = ''.join(p.get('text', '') for p in parts).strip()
+        if text:
+            return clean_svg_response(text)
+    raise Exception('No content in Gemini response')
 
 
 def fetch_models(api_key: str, endpoint: str = '', ssl_context=None) -> list:
@@ -96,13 +78,12 @@ def fetch_models(api_key: str, endpoint: str = '', ssl_context=None) -> list:
     Fetch available Gemini model IDs that support generateContent.
     Falls back to DEFAULT_MODELS on failure.
     """
-    url = f'{_BASE_URL}/models?key={api_key}'
     try:
-        with urllib.request.urlopen(url, timeout=10, context=ssl_context) as resp:
-            data = json.loads(resp.read().decode())
+        data = http_get_json(f'{_BASE_URL}/models?key={api_key}', {},
+                             10, ssl_context)
         models = []
         for m in data.get('models', []):
-            name = m.get('name', '')  # e.g. "models/gemini-1.5-pro"
+            name = m.get('name', '')  # e.g. "models/gemini-2.5-pro"
             supported = m.get('supportedGenerationMethods', [])
             if 'generateContent' in supported and name:
                 short = name.split('/')[-1]
@@ -112,11 +93,3 @@ def fetch_models(api_key: str, endpoint: str = '', ssl_context=None) -> list:
         return models or DEFAULT_MODELS
     except Exception:
         return DEFAULT_MODELS
-
-
-def _clean(svg_code: str) -> str:
-    svg_code = re.sub(r'^```(?:svg|xml)?\s*\n?', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'\n?```\s*$', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'<\?xml[^>]+\?>\s*', '', svg_code)
-    svg_code = re.sub(r'<!DOCTYPE[^>]+>\s*', '', svg_code)
-    return svg_code.strip()

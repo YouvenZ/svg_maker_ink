@@ -8,48 +8,32 @@ e.g. LM Studio, LocalAI, vLLM, Groq, Together AI, Mistral, DeepSeek, etc.
 Exposes:
   PROVIDER_ID, NAME, ENV_KEY, CONFIG_KEY, DEFAULT_MODELS,
   NEEDS_ENDPOINT, ENDPOINT_PLACEHOLDER, SUPPORTS_SEED
-  generate(prompt, system_prompt, opts, api_key, ssl_context) -> str
+  generate(prompt, system_prompt, opts, api_key, ssl_context,
+           progress_cb=None) -> str
   fetch_models(api_key, endpoint='', ssl_context=None) -> list[str]
 """
 
-import json
-import urllib.request
-import urllib.error
-import re
+from svg_llm_common import (
+    PROVIDERS, clean_svg_response, http_get_json, http_post_json,
+)
+from svg_llm_openai import stream_chat_text
 
 PROVIDER_ID = 'custom_openai'
-NAME = 'Custom (OpenAI-compatible)'
-ENV_KEY = 'CUSTOM_OPENAI_API_KEY'
-CONFIG_KEY = 'custom_openai_api_key'
-DEFAULT_MODELS = ['custom-model']
+NAME = PROVIDERS['custom_openai']['name']
+ENV_KEY = PROVIDERS['custom_openai']['env_key']
+CONFIG_KEY = PROVIDERS['custom_openai']['config_key']
+DEFAULT_MODELS = PROVIDERS['custom_openai']['models']
 NEEDS_ENDPOINT = True
-ENDPOINT_PLACEHOLDER = 'http://localhost:1234/v1  or  https://api.groq.com/openai/v1'
+ENDPOINT_PLACEHOLDER = PROVIDERS['custom_openai']['endpoint_placeholder']
 SUPPORTS_SEED = True
 
 
-def generate(prompt: str, system_prompt: str, opts: dict, api_key: str, ssl_context) -> str:
-    """
-    Call any OpenAI-compatible /chat/completions endpoint and return the raw text.
-
-    opts keys used: model, temperature, max_tokens, timeout, seed, endpoint
-    """
-    endpoint = (opts.get('endpoint') or '').rstrip('/')
-    if not endpoint.startswith(('http://', 'https://')):
-        raise Exception(
-            "Custom provider requires a valid base URL in the 'Endpoint' field "
-            "(e.g. http://localhost:1234/v1 or https://api.groq.com/openai/v1)"
-        )
-
-    url = f'{endpoint}/chat/completions'
-    headers = {
-        'Content-Type': 'application/json',
-    }
-    # Include Authorization header if an API key was provided
-    if api_key:
-        headers['Authorization'] = f'Bearer {api_key}'
-
+def _build_payload(model, system_prompt, prompt, opts, stream=False):
+    # Deliberately conservative: always classic max_tokens + temperature —
+    # third-party OpenAI-compatible servers (llama.cpp, LM Studio, vLLM…)
+    # commonly don't understand max_completion_tokens.
     data: dict = {
-        'model': opts.get('model', 'custom-model'),
+        'model': model,
         'messages': [
             {'role': 'system', 'content': system_prompt},
             {'role': 'user',   'content': prompt},
@@ -60,33 +44,50 @@ def generate(prompt: str, system_prompt: str, opts: dict, api_key: str, ssl_cont
     seed = int(opts.get('seed', -1))
     if seed >= 0:
         data['seed'] = seed
+    if stream:
+        data['stream'] = True
+    return data
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode('utf-8'),
-        headers=headers,
-        method='POST',
-    )
-    # Use None for SSL context when connecting to http:// (local) endpoints
-    ctx = None if endpoint.startswith('http://') else ssl_context
-    try:
-        with urllib.request.urlopen(req, timeout=int(opts.get('timeout', 60)),
-                                    context=ctx) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            choices = result.get('choices', [])
-            if choices:
-                text = choices[0].get('message', {}).get('content', '').strip()
-                return _clean(text)
-            raise Exception('No content in custom provider response')
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        try:
-            msg = json.loads(body).get('error', {}).get('message', str(e))
-        except Exception:
-            msg = body[:300]
-        raise Exception(f'Custom provider API error ({e.code}): {msg}')
-    except urllib.error.URLError as e:
-        raise Exception(f'Custom provider network error: {e.reason}')
+
+def generate(prompt: str, system_prompt: str, opts: dict, api_key: str,
+             ssl_context, progress_cb=None) -> str:
+    """
+    Call any OpenAI-compatible /chat/completions endpoint and return the raw text.
+
+    opts keys used: model, temperature, max_tokens, timeout, seed, endpoint
+    progress_cb(chars_received) enables streaming with live progress.
+    """
+    endpoint = (opts.get('endpoint') or '').rstrip('/')
+    if not endpoint.startswith(('http://', 'https://')):
+        raise Exception(
+            "Custom provider requires a valid base URL in the 'Endpoint' field "
+            "(e.g. http://localhost:1234/v1 or https://api.groq.com/openai/v1)"
+        )
+
+    url = f'{endpoint}/chat/completions'
+    headers = {'Content-Type': 'application/json'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    model = opts.get('model', 'custom-model')
+    timeout = int(opts.get('timeout', 60))
+
+    if progress_cb:
+        data = _build_payload(model, system_prompt, prompt, opts, stream=True)
+        text = stream_chat_text(url, headers, data, timeout, ssl_context,
+                                'Custom provider', progress_cb)
+        if text:
+            return clean_svg_response(text)
+        raise Exception('No content in custom provider streaming response')
+
+    data = _build_payload(model, system_prompt, prompt, opts)
+    result = http_post_json(url, headers, data, timeout, ssl_context,
+                            'Custom provider')
+    choices = result.get('choices', [])
+    if choices:
+        text = choices[0].get('message', {}).get('content', '').strip()
+        if text:
+            return clean_svg_response(text)
+    raise Exception('No content in custom provider response')
 
 
 def fetch_models(api_key: str = '', endpoint: str = '', ssl_context=None) -> list:
@@ -97,24 +98,12 @@ def fetch_models(api_key: str = '', endpoint: str = '', ssl_context=None) -> lis
     if not endpoint:
         return DEFAULT_MODELS
     base = endpoint.rstrip('/')
-    url = f'{base}/models'
-    headers: dict = {}
+    headers = {}
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
-    req = urllib.request.Request(url, headers=headers)
-    ctx = None if base.startswith('http://') else ssl_context
     try:
-        with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
-            data = json.loads(resp.read().decode())
+        data = http_get_json(f'{base}/models', headers, 8, ssl_context)
         models = [m['id'] for m in data.get('data', []) if m.get('id')]
         return models or DEFAULT_MODELS
     except Exception:
         return DEFAULT_MODELS
-
-
-def _clean(svg_code: str) -> str:
-    svg_code = re.sub(r'^```(?:svg|xml)?\s*\n?', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'\n?```\s*$', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'<\?xml[^>]+\?>\s*', '', svg_code)
-    svg_code = re.sub(r'<!DOCTYPE[^>]+>\s*', '', svg_code)
-    return svg_code.strip()

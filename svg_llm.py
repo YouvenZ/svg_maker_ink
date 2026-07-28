@@ -8,13 +8,19 @@ any custom OpenAI-compatible endpoint.
 import inkex
 from inkex import Group
 import re
-import ssl
 import urllib.request
 import json
 import xml.etree.ElementTree as ET
 import os
 import time
 from datetime import datetime
+
+from svg_llm_common import (
+    PROVIDERS as _COMMON_PROVIDERS,
+    build_ssl_context as _build_ssl_context,
+    clean_svg_response as _clean_svg_response,
+    sanitize_svg as _sanitize_svg,
+)
 
 try:
     from svg_llm_prompts import PromptLoader as _PromptLoader
@@ -34,22 +40,6 @@ except Exception as _prov_err:
     _PROVIDERS_LOADED = False
     _prov_openai = _prov_anthropic = _prov_google = None
     _prov_ollama = _prov_azure = _prov_custom = None
-
-
-def _build_ssl_context():
-    """
-    Return an SSL context that performs full certificate verification.
-    Strategy (in order):
-      1. certifi â€” ships its own CA bundle, works everywhere
-      2. Windows cert store (ssl.create_default_context loads it automatically on Windows)
-      3. Default context with no explicit cafile (works on most Linux/macOS)
-    """
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        pass
-    return ssl.create_default_context()
 
 
 _SSL_CONTEXT = _build_ssl_context()
@@ -96,46 +86,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
         'pattern', 'linearGradient', 'radialGradient', 'filter', 'text'
     })
     
-    PROVIDERS = {
-        'openai': {
-            'name': 'OpenAI',
-            'env_key': 'OPENAI_API_KEY',
-            'config_key': 'openai_api_key',
-            'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo',
-                       'o1', 'o1-mini', 'o3-mini'],
-        },
-        'anthropic': {
-            'name': 'Anthropic Claude',
-            'env_key': 'ANTHROPIC_API_KEY',
-            'config_key': 'anthropic_api_key',
-            'models': ['claude-opus-4-5', 'claude-sonnet-4-5',
-                       'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
-        },
-        'google': {
-            'name': 'Google Gemini',
-            'env_key': 'GOOGLE_API_KEY',
-            'config_key': 'google_api_key',
-            'models': ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
-        },
-        'azure': {
-            'name': 'Azure OpenAI',
-            'env_key': 'AZURE_OPENAI_API_KEY',
-            'config_key': 'azure_openai_api_key',
-            'models': ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
-        },
-        'ollama': {
-            'name': 'Ollama (Local)',
-            'env_key': '',
-            'config_key': '',
-            'models': ['llama3.2', 'llama3.1', 'qwen2.5-coder', 'codellama', 'mistral'],
-        },
-        'custom_openai': {
-            'name': 'Custom (OpenAI-compatible)',
-            'env_key': 'CUSTOM_OPENAI_API_KEY',
-            'config_key': 'custom_openai_api_key',
-            'models': ['custom-model'],
-        },
-    }
+    # Single source of truth for provider metadata — see svg_llm_common.py
+    PROVIDERS = _COMMON_PROVIDERS
 
 
     # Maximum SVG size (bytes) we will attempt to parse and insert
@@ -152,7 +104,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
     
     def effect(self):
         """Main effect function."""
-        # â”€â”€ GTK is required â€” no INX fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── GTK is required — no INX fallback ────────────────
         try:
             import gi
             gi.require_version('Gtk', '3.0')
@@ -188,7 +140,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         dialog._save_defaults_to_config(self.gen_options)
         dialog.destroy()
 
-        # â”€â”€ Common validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Common validation ────────────────────────────────
         api_key = self.get_api_key()
 
         if self.gen_options.save_api_key and api_key:
@@ -216,9 +168,10 @@ class SVGLLMGenerator(inkex.EffectExtension):
         enhanced_prompt = self.build_prompt(width, height, selection_context)
         variations = min(max(1, self.gen_options.variations), 4)
 
-        # â”€â”€ Run API calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        def gen_fn(variation_idx):
-            return self.call_api_with_retry(enhanced_prompt, api_key, variation_idx)
+        # ── Run API calls ────────────────────────────────────
+        def gen_fn(variation_idx, progress_cb=None):
+            return self.call_api_with_retry(
+                enhanced_prompt, api_key, variation_idx, progress_cb)
 
         prog = GenerationProgressDialog(variations)
         prog.start(gen_fn)
@@ -228,34 +181,65 @@ class SVGLLMGenerator(inkex.EffectExtension):
             prog.destroy()
             return
         svg_results = prog.results
+        prog.destroy()
 
-        # Process results (keep window visible to avoid blank-screen freeze)
-        prog.update_status("Processing results…")
+        # ── Review-first gallery (default) ───────────────────────
+        # Nothing is inserted until the user approves it. Set
+        # "review_before_insert": false in config.json to restore the old
+        # auto-insert behaviour.
+        review_enabled = bool(self.get_config_value('review_before_insert', True))
+        _ReviewDialog = None
+        if review_enabled:
+            try:
+                from svg_llm_review import ResultReviewDialog as _ReviewDialog
+            except Exception as _rev_err:
+                inkex.utils.debug(
+                    f"Review dialog unavailable ({_rev_err}); falling back "
+                    "to auto-insert."
+                )
+                review_enabled = False
+
+        if review_enabled and _ReviewDialog is not None:
+            def refine_fn(existing_svg, instruction):
+                return self._refine_svg(
+                    existing_svg, instruction, api_key, width, height)
+
+            def regenerate_fn(idx):
+                return self.call_api_with_retry(enhanced_prompt, api_key, idx)
+
+            review = _ReviewDialog(svg_results, refine_fn, regenerate_fn)
+            review.present()
+            Gtk.main()
+            was_accepted = review.accepted
+            accepted = list(review.accepted_results)
+            review.destroy()
+            if not was_accepted:
+                return  # Discard All — document untouched
+        else:
+            # Legacy auto-insert path
+            errors = [f"Variation {i + 1}: {err}"
+                      for i, (svg, err) in enumerate(svg_results) if err]
+            if errors:
+                inkex.errormsg("\n".join(errors))
+            accepted = [
+                (i, _sanitize_svg(svg))
+                for i, (svg, err) in enumerate(svg_results)
+                if svg and not err
+            ]
+        if not accepted:
+            return
+
+        # ── Insert accepted variations ───────────────────────────
+        n_accepted = len(accepted)
         result_entries = []
-        for i, (svg_code, error) in enumerate(svg_results):
+        for slot, (orig_idx, svg_code) in enumerate(accepted):
             entry = {
-                'variation': i + 1,
+                'variation': orig_idx + 1,
                 'status': 'error',
                 'error': None,
                 'saved_path': None,
                 'svg_size': None,
             }
-            if error:
-                entry['error'] = error
-                result_entries.append(entry)
-                prog.append_log("Variation %d error: %s" % (i + 1, error))
-                continue
-            if not svg_code:
-                entry['error'] = 'No SVG code returned by the model.'
-                result_entries.append(entry)
-                prog.append_log("Variation %d: empty response" % (i + 1,))
-                continue
-
-            prog.update_status("Inserting variation %d of %d…" % (i + 1, len(svg_results)))
-            # Drain pending GTK events so the status label renders before the insert
-            while Gtk.events_pending():
-                Gtk.main_iteration_do(False)
-
             svg_code = self.validate_and_fix_svg(svg_code, width, height)
             entry['svg_size'] = len(svg_code.encode('utf-8'))
 
@@ -264,40 +248,57 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 saved_path = self.save_svg_to_disk(svg_code)
             entry['saved_path'] = saved_path
 
-            offset_x = i * (width + 20) if variations > 1 else 0
+            offset_x = slot * (width + 20) if n_accepted > 1 else 0
             if not self.gen_options.embed_in_svg and saved_path:
-                self._insert_image_link(saved_path, width, height, offset_x, variation_num=i + 1)
+                self._insert_image_link(saved_path, width, height, offset_x,
+                                        variation_num=orig_idx + 1)
             else:
-                self.add_svg_to_document(svg_code, width, height, offset_x, variation_num=i + 1)
-
+                self.add_svg_to_document(svg_code, width, height, offset_x,
+                                         variation_num=orig_idx + 1)
             entry['status'] = 'ok'
-            prog.append_log("Variation %d inserted (%d B)" % (i + 1, entry['svg_size']))
             result_entries.append(entry)
 
-        prog.destroy()
+        # Summary dialog only in legacy mode — the review gallery already
+        # gave per-variation feedback.
+        if not review_enabled:
+            result_dlg = GenerationResultDialog(result_entries)
+            result_dlg.present()
+            Gtk.main()
+            result_dlg.destroy()
 
-        # Show result summary dialog
-        result_dlg = GenerationResultDialog(result_entries)
-        result_dlg.present()
-        Gtk.main()
-        result_dlg.destroy()
-
-        # â”€â”€ Canvas / page handling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        if variations > 1:
-            total_width = variations * (width + 20)
+        # ── Canvas / page handling ───────────────────────────
+        if n_accepted > 1:
+            total_width = n_accepted * (width + 20)
             if getattr(self.gen_options, 'auto_fit_page', False):
-                self._auto_fit_page(width, height, variations)
+                self._auto_fit_page(width, height, n_accepted)
             elif total_width > self.svg.viewport_width * 1.5:
                 inkex.errormsg(
-                    f"Note: {variations} variations at {width}px each "
+                    f"Note: {n_accepted} variations at {width}px each "
                     f"({total_width}px total) extend beyond the canvas. "
                     "Use View \u203a Zoom \u203a Fit Page to see all."
                 )
 
-        # â”€â”€ History â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── History ──────────────────────────────────────────
         if self.gen_options.save_to_history:
             self.save_to_history(self.gen_options.prompt, width, height)
-    
+
+    def _refine_svg(self, existing_svg, instruction, api_key, width, height):
+        """
+        Ask the model to modify an existing SVG according to a follow-up
+        instruction. Used by the review dialog's Refine action.
+        """
+        prompt = (
+            f"Modify the following SVG according to this instruction:\n"
+            f"{instruction}\n\n"
+            "=== EXISTING SVG (modify this) ===\n"
+            f"{existing_svg}\n"
+            "=== END EXISTING SVG ===\n\n"
+            "Return the complete, updated SVG code only — no explanations, "
+            "no markdown fences. Keep elements that the instruction does not "
+            f"affect intact. Keep viewBox=\"0 0 {width} {height}\"."
+        )
+        return self.call_api(prompt, api_key)
+
     # ==================== Configuration Management ====================
     
     def get_save_directory(self):
@@ -321,8 +322,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
             provider = self.gen_options.provider
 
 
-            # Skip API key for local provider
-            if provider == 'local':
+            # Skip API key for providers that need none (local Ollama)
+            if self.PROVIDERS.get(provider, {}).get('keyless'):
                 return ''
 
             # 1. Check direct input first
@@ -373,7 +374,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         filepath = os.path.join(save_dir, filename)
         
         try:
-            with open(filepath, 'w') as f:
+            with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(image_data)
             return filepath
         except Exception as e:
@@ -466,7 +467,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 self.svg.set('height', f'{new_h}px')
                 self.svg.set('viewBox', f'0 0 {new_w} {new_h}')
                 inkex.utils.debug(
-                    f"Page expanded to {new_w}Ã—{new_h}px to fit {variations} variation(s)."
+                    f"Page expanded to {new_w}×{new_h}px to fit {variations} variation(s)."
                 )
         except Exception as exc:
             inkex.utils.debug(f"auto_fit_page: {exc}")
@@ -475,7 +476,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
         """Warn if the selected model is not known for the selected provider."""
         provider = self.gen_options.provider
         model = self.gen_options.model
-        # Azure and custom_openai use user-defined names — always valid
+        # Azure and custom_openai use user-defined names — always valid.
         if provider in ('azure', 'custom_openai'):
             return
         provider_models = self.PROVIDERS.get(provider, {}).get('models', [])
@@ -683,7 +684,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
             prompt_parts.append(f"\n{selection_context}")
             prompt_parts.append("Try to match the style of the selected elements.")
 
-        # Refine mode â€” include raw SVG code of selection
+        # Refine mode — include raw SVG code of selection
         if getattr(self.gen_options, 'include_selection_svg', False):
             selected_svg = self._get_selection_as_svg()
             if selected_svg:
@@ -811,7 +812,8 @@ class SVGLLMGenerator(inkex.EffectExtension):
     
     # ==================== API Calls ====================
     
-    def call_api_with_retry(self, prompt, api_key, variation_index=0):
+    def call_api_with_retry(self, prompt, api_key, variation_index=0,
+                            progress_cb=None):
         """Call API with retry logic and exponential back-off."""
         last_error = None
 
@@ -822,7 +824,7 @@ class SVGLLMGenerator(inkex.EffectExtension):
                 else:
                     variation_prompt = prompt
 
-                return self.call_api(variation_prompt, api_key)
+                return self.call_api(variation_prompt, api_key, progress_cb)
 
             except Exception as e:
                 last_error = e
@@ -831,8 +833,10 @@ class SVGLLMGenerator(inkex.EffectExtension):
                     time.sleep(2 ** attempt)
 
         raise last_error
-    
-    def call_api(self, prompt, api_key):
+
+    _PROVIDER_MODULES = None  # populated lazily in call_api
+
+    def call_api(self, prompt, api_key, progress_cb=None):
         """Route to the appropriate provider module."""
         provider = self.gen_options.provider.lower()
         opts = {
@@ -848,20 +852,23 @@ class SVGLLMGenerator(inkex.EffectExtension):
         if not _PROVIDERS_LOADED:
             return self._fallback_openai_call(prompt, sys_prompt, opts, api_key)
 
-        if provider == 'openai':
-            return _prov_openai.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
-        elif provider == 'anthropic':
-            return _prov_anthropic.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
-        elif provider == 'google':
-            return _prov_google.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
-        elif provider == 'ollama':
-            return _prov_ollama.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
-        elif provider == 'azure':
-            return _prov_azure.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
-        elif provider == 'custom_openai':
-            return _prov_custom.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT)
-        else:
+        modules = {
+            'openai':        _prov_openai,
+            'anthropic':     _prov_anthropic,
+            'google':        _prov_google,
+            'ollama':        _prov_ollama,
+            'azure':         _prov_azure,
+            'custom_openai': _prov_custom,
+        }
+        mod = modules.get(provider)
+        if mod is None:
             raise Exception(f"Unknown provider: {provider}")
+
+        # Only pass a progress callback to providers that stream
+        if not self.PROVIDERS.get(provider, {}).get('supports_stream'):
+            progress_cb = None
+        return mod.generate(prompt, sys_prompt, opts, api_key, _SSL_CONTEXT,
+                            progress_cb=progress_cb)
 
     def _fallback_openai_call(self, prompt, system_prompt, opts, api_key):
         """Minimal inline OpenAI call used when provider modules failed to import."""
@@ -892,59 +899,18 @@ class SVGLLMGenerator(inkex.EffectExtension):
         raise Exception('No response from fallback OpenAI call')
 
     def clean_svg_response(self, svg_code):
-        """Clean up SVG code from API response."""
-        # Remove markdown code blocks if present
-        svg_code = re.sub(r'^```(?:svg|xml)?\s*\n?', '', svg_code, flags=re.MULTILINE)
-        svg_code = re.sub(r'\n?```\s*$', '', svg_code, flags=re.MULTILINE)
-        
-        # Remove XML declaration if present
-        svg_code = re.sub(r'<\?xml[^>]+\?>\s*', '', svg_code)
-        svg_code = re.sub(r'<!DOCTYPE[^>]+>\s*', '', svg_code)
-        
-        # Fix common AI mistakes
-        svg_code = re.sub(r'xmlns=""', '', svg_code)
-        svg_code = svg_code.replace('&nbsp;', ' ')
-        
-        # Trim whitespace
-        svg_code = svg_code.strip()
-        
-        return svg_code
-    
+        """Clean up SVG code from API response (shared implementation)."""
+        return _clean_svg_response(svg_code)
+
     def validate_and_fix_svg(self, svg_code, width, height):
         """
-        Validate and fix common SVG issues.
-
-        Ensures:
-        - The code starts with <svg
-        - xmlns is present
-        - viewBox is set to "0 0 {width} {height}"
-        - width and height attributes are set to {width} and {height} (in px)
-          so the viewBox-to-pixel mapping is always 1:1 when imported.
+        Ensure the SVG has xmlns / viewBox / root width+height matching the
+        target size. Shared implementation — see
+        svg_llm_common.normalize_svg_dimensions().
         """
-        if not svg_code.startswith('<svg'):
-            svg_match = re.search(r'<svg[^>]*>.*</svg>', svg_code, re.DOTALL)
-            if svg_match:
-                svg_code = svg_match.group(0)
-            else:
-                svg_code = (
-                    f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">' + svg_code + '</svg>'
-                )
+        from svg_llm_common import normalize_svg_dimensions
+        return normalize_svg_dimensions(svg_code, width, height)
 
-        if 'xmlns=' not in svg_code:
-            svg_code = svg_code.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"', 1)
-
-        # Normalise viewBox to the target dimensions so elements always span 0..width, 0..height
-        if 'viewBox=' not in svg_code:
-            svg_code = svg_code.replace('<svg', f'<svg viewBox="0 0 {width} {height}"', 1)
-
-        # Force width / height to match target so the viewBox ratio is 1:1
-        svg_code = re.sub(r'width="[^"]*"', f'width="{width}"', svg_code, count=1)
-        svg_code = re.sub(r'height="[^"]*"', f'height="{height}"', svg_code, count=1)
-        if 'width="' not in svg_code[:300]:
-            svg_code = svg_code.replace('<svg', f'<svg width="{width}" height="{height}"', 1)
-
-        return svg_code
-    
     def add_svg_to_document(self, svg_code, target_width, target_height, offset_x=0, variation_num=1):
         """
         Parse SVG code and insert it into the Inkscape document.

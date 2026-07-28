@@ -26,97 +26,16 @@ try:
     _HAS_RSVG = True
 except Exception:
     pass
-import ssl
 import threading
 import urllib.request
 from dataclasses import dataclass
 
-
-def _build_ssl_context():
-    try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        pass
-    return ssl.create_default_context()
-
+from svg_llm_common import (
+    PROVIDERS,
+    build_ssl_context as _build_ssl_context,
+)
 
 _SSL_CONTEXT = _build_ssl_context()
-
-
-# ==================== PROVIDER REGISTRY ====================
-
-PROVIDERS = {
-    'openai': {
-        'name': 'OpenAI',
-        'env_key': 'OPENAI_API_KEY',
-        'config_key': 'openai_api_key',
-        'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo',
-                   'o1', 'o1-mini', 'o3-mini'],
-        'supports_seed': True,
-        'needs_endpoint': False,
-        'endpoint_placeholder': '',
-        'supports_fetch_models': True,
-    },
-    'anthropic': {
-        'name': 'Anthropic Claude',
-        'env_key': 'ANTHROPIC_API_KEY',
-        'config_key': 'anthropic_api_key',
-        'models': [
-            'claude-opus-4-5',
-            'claude-sonnet-4-5',
-            'claude-3-5-sonnet-20241022',
-            'claude-3-5-haiku-20241022',
-            'claude-3-opus-20240229',
-            'claude-3-haiku-20240307',
-        ],
-        'supports_seed': False,
-        'needs_endpoint': False,
-        'endpoint_placeholder': '',
-        'supports_fetch_models': True,
-    },
-    'google': {
-        'name': 'Google Gemini',
-        'env_key': 'GOOGLE_API_KEY',
-        'config_key': 'google_api_key',
-        'models': ['gemini-2.0-flash', 'gemini-2.0-flash-lite',
-                   'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'],
-        'supports_seed': True,
-        'needs_endpoint': False,
-        'endpoint_placeholder': '',
-        'supports_fetch_models': True,
-    },
-    'azure': {
-        'name': 'Azure OpenAI',
-        'env_key': 'AZURE_OPENAI_API_KEY',
-        'config_key': 'azure_openai_api_key',
-        'models': ['gpt-4o', 'gpt-4-turbo', 'gpt-35-turbo'],
-        'supports_seed': True,
-        'needs_endpoint': True,
-        'endpoint_placeholder': 'https://your-resource.openai.azure.com',
-        'supports_fetch_models': True,
-    },
-    'ollama': {
-        'name': 'Ollama (Local)',
-        'env_key': '',
-        'config_key': '',
-        'models': ['llama3.2', 'llama3.1', 'qwen2.5-coder', 'codellama', 'mistral'],
-        'supports_seed': True,
-        'needs_endpoint': True,
-        'endpoint_placeholder': 'http://localhost:11434',
-        'supports_fetch_models': True,
-    },
-    'custom_openai': {
-        'name': 'Custom (OpenAI-compatible)',
-        'env_key': 'CUSTOM_OPENAI_API_KEY',
-        'config_key': 'custom_openai_api_key',
-        'models': ['custom-model'],
-        'supports_seed': True,
-        'needs_endpoint': True,
-        'endpoint_placeholder': 'http://localhost:1234/v1  or  https://api.groq.com/openai/v1',
-        'supports_fetch_models': True,
-    },
-}
 
 
 # ==================== PRESET HINTS ====================
@@ -147,7 +66,7 @@ class GenerationOptions:
     prompt: str = ""
     prompt_preset: str = "none"
     use_selection_context: bool = False
-    model: str = "gpt-4o"
+    model: str = "gpt-5.1"
     temperature: float = 0.7
     max_tokens: int = 4000
     timeout: int = 60
@@ -343,6 +262,11 @@ class SVGLLMDialog(Gtk.Window):
         vbox.pack_start(self._use_config_key_check, False, False, 0)
 
         self._save_api_key_check = Gtk.CheckButton(label="Save entered key to config.json")
+        self._save_api_key_check.set_tooltip_text(
+            "Note: config.json stores keys as plain, unencrypted text in the "
+            "extension folder. Prefer the environment variable if other "
+            "people or programs can read your files."
+        )
         vbox.pack_start(self._save_api_key_check, False, False, 0)
 
         # Endpoint row — visible for Ollama and Azure
@@ -758,17 +682,28 @@ class SVGLLMDialog(Gtk.Window):
 
         sections = [
             ("Getting Started", [
-                "1. Choose a provider (OpenAI, Anthropic, Google, or Ollama)",
+                "1. Choose a provider (OpenAI, Anthropic, Google, Azure,",
+                "   Ollama, or a custom OpenAI-compatible server)",
                 "2. Enter your API key — or set the environment variable and check the box",
                 "3. Describe what you want to create in the Prompt tab",
                 "4. Adjust Style, Size, and Output options as needed",
-                "5. Click Generate",
+                "5. Click Generate, then review the results in the gallery",
+            ]),
+            ("Review Gallery", [
+                "• Nothing is inserted until you approve it in the gallery",
+                "• Check the variations you want, then click Insert Selected",
+                "• Refine: type a follow-up (e.g. 'make the roof red') to",
+                "  iterate on a variation without starting over",
+                "• Regenerate re-runs the original prompt for one variation",
+                "• Discard All closes without touching your document",
             ]),
             ("API Keys", [
-                "• OpenAI:    https://platform.openai.com/api-keys",
-                "• Anthropic: https://console.anthropic.com/",
-                "• Google:    https://aistudio.google.com/apikey",
-                "• Ollama:    No key needed — runs locally on your machine",
+                "• OpenAI:      https://platform.openai.com/api-keys",
+                "• Anthropic:   https://console.anthropic.com/",
+                "• Google:      https://aistudio.google.com/apikey",
+                "• Azure:       your Azure OpenAI resource key + endpoint",
+                "• Ollama:      no key — runs locally on your machine",
+                "Keys saved to config.json are stored as plain text.",
             ]),
             ("Example Prompts", [
                 "• A simple house icon with a red chimney",
@@ -781,11 +716,16 @@ class SVGLLMDialog(Gtk.Window):
             ("Tips", [
                 "• Presets (icon, diagram, etc.) give the model better context",
                 "• Select Inkscape elements first to match their style",
-                "• Temperature 0.3–0.5 for predictable, structured output",
-                "• Temperature 0.8–1.2 for creative, varied output",
+                "• Use ⟳ Refresh in the Model tab to fetch the provider's",
+                "  current model list",
+                "• Temperature 0.3–0.5 for predictable output, 0.8–1.2 for",
+                "  variety (newest OpenAI/Anthropic models ignore it)",
                 "• Use the History tab to replay and refine past prompts",
-                "• Ollama models update automatically when you switch to it",
-                "• API usage costs apply for cloud providers (not Ollama)",
+                "• Variations are generated in parallel — 4 costs the same",
+                "  wall-clock time as 1",
+                "• API usage costs apply for cloud providers (not local Ollama)",
+                "• Prompts in prompts/*.md are editable — customize styles,",
+                "  presets, and the system prompt without touching code",
             ]),
         ]
 
@@ -830,6 +770,18 @@ class SVGLLMDialog(Gtk.Window):
         # Show/hide custom model name entry (only for custom_openai)
         if hasattr(self, '_custom_model_row'):
             self._custom_model_row.set_visible(provider == 'custom_openai')
+
+        # API key is irrelevant for local Ollama
+        keyless = PROVIDERS.get(provider, {}).get('keyless', False)
+        self._api_key_entry.set_sensitive(not keyless)
+        self._api_key_entry.set_placeholder_text(
+            "Not needed for local Ollama" if keyless
+            else "Paste key here — or leave blank to use env/config"
+        )
+        self._use_env_key_check.set_sensitive(not keyless)
+        self._use_config_key_check.set_sensitive(not keyless)
+        self._save_api_key_check.set_sensitive(not keyless)
+        self._test_key_btn.set_tooltip_text("")
 
         # P2-2: Auto-discover Ollama models
         if provider == 'ollama':
@@ -963,7 +915,8 @@ class SVGLLMDialog(Gtk.Window):
     def _on_test_key(self, button):
         key = self._api_key_entry.get_text().strip()
         provider = self._provider_combo.get_active_id() or 'openai'
-        if not key:
+        # Ollama needs no key — Test checks reachability instead
+        if not key and provider != 'ollama':
             self._alert("No key entered. Enter an API key in the field above.")
             return
 
@@ -989,18 +942,10 @@ class SVGLLMDialog(Gtk.Window):
                 return True, "Key accepted ✓"
 
             elif provider == 'anthropic':
-                # Anthropic has no free list endpoint; send a minimal message
-                import json as _json
-                payload = _json.dumps({
-                    "model": "claude-3-haiku-20240307",
-                    "max_tokens": 1,
-                    "messages": [{"role": "user", "content": "hi"}],
-                }).encode()
+                # Free authenticated endpoint — no tokens consumed
                 req = urllib.request.Request(
-                    "https://api.anthropic.com/v1/messages",
-                    data=payload,
+                    "https://api.anthropic.com/v1/models",
                     headers={
-                        "Content-Type": "application/json",
                         "x-api-key": key,
                         "anthropic-version": "2023-06-01",
                     },
@@ -1138,16 +1083,8 @@ class SVGLLMDialog(Gtk.Window):
 
         self._ollama_status_label.set_text("Fetching models…")
 
-        # Map provider id to module name
-        _MODULE_MAP = {
-            'openai':       'svg_llm_openai',
-            'anthropic':    'svg_llm_anthropic',
-            'google':       'svg_llm_google',
-            'azure':        'svg_llm_azure',
-            'ollama':       'svg_llm_ollama',
-            'custom_openai':'svg_llm_custom',
-        }
-        module_name = _MODULE_MAP.get(provider)
+        # Module name comes from the shared provider registry
+        module_name = PROVIDERS.get(provider, {}).get('module')
         if not module_name:
             self._ollama_status_label.set_text(f"No fetch support for '{provider}'")
             return
@@ -1206,6 +1143,8 @@ class SVGLLMDialog(Gtk.Window):
     def _load_defaults_from_config(self):
         """Pre-populate fields from saved config.json values."""
         provider = self.config.get('default_provider', 'openai')
+        if provider not in PROVIDERS:
+            provider = 'openai'  # e.g. a removed provider saved in config.json
         self._provider_combo.set_active_id(provider)
 
         save_dir = self.config.get('default_save_directory', '')
@@ -1436,7 +1375,7 @@ class SVGLLMDialog(Gtk.Window):
 
         _selected_provider = self._provider_combo.get_active_id() or 'openai'
         # For custom_openai allow the user to type an arbitrary model name
-        _selected_model = self._model_combo.get_active_id() or 'gpt-4o'
+        _selected_model = self._model_combo.get_active_id() or 'gpt-5.1'
         if _selected_provider == 'custom_openai':
             _custom_name = self._custom_model_entry.get_text().strip()
             if _custom_name:
@@ -1536,6 +1475,16 @@ class SVGPreviewWindow(Gtk.Window):
             except Exception:
                 self._handle = None
 
+        pixbuf = None
+        if self._handle is None:
+            # Fallback renderer: GdkPixbuf's SVG loader (available in
+            # Inkscape's Windows build where the Rsvg typelib is missing)
+            try:
+                from svg_llm_review import render_svg_pixbuf
+                pixbuf = render_svg_pixbuf(self._svg_code, 520)
+            except Exception:
+                pixbuf = None
+
         if self._handle is not None:
             drawing_area = Gtk.DrawingArea()
             drawing_area.set_size_request(400, 400)
@@ -1543,6 +1492,12 @@ class SVGPreviewWindow(Gtk.Window):
             sw = Gtk.ScrolledWindow()
             sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
             sw.add(drawing_area)
+            preview_vbox.pack_start(sw, True, True, 0)
+        elif pixbuf is not None:
+            img = Gtk.Image.new_from_pixbuf(pixbuf)
+            sw = Gtk.ScrolledWindow()
+            sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            sw.add(img)
             preview_vbox.pack_start(sw, True, True, 0)
         else:
             lbl = Gtk.Label(
@@ -1718,7 +1673,7 @@ class GenerationProgressDialog(Gtk.Window):
     # ── Public API ───────────────────────────────────────────
 
     def start(self, gen_fn):
-        """Begin generation. gen_fn(variation_idx: int) -> svg_str."""
+        """Begin generation. gen_fn(variation_idx, progress_cb=None) -> svg_str."""
         self._gen_fn = gen_fn
         self._pulse_id = GLib.timeout_add(80, self._on_pulse)
         threading.Thread(target=self._worker, daemon=True).start()
@@ -1741,21 +1696,54 @@ class GenerationProgressDialog(Gtk.Window):
         GLib.idle_add(lambda: self._status_lbl.set_text(text) or False)
 
     def _worker(self):
-        for i in range(self.total):
-            if self.cancelled:
-                self._log("Cancelled.")
-                break
-            self._set_status(
-                f"Calling API \u2014 variation {i + 1} of {self.total}\u2026"
-            )
+        """
+        Run all variations CONCURRENTLY on daemon threads.
+
+        Daemon threads (rather than a ThreadPoolExecutor) matter here:
+        urllib requests cannot be aborted mid-flight, so on Cancel we
+        abandon the in-flight threads and let them die with the process
+        instead of blocking until they finish.
+        """
+        self.results = [(None, 'Not completed')] * self.total
+        self._set_status(
+            f"Calling API \u2014 {self.total} variation(s) in parallel\u2026"
+        )
+
+        def _run_one(i):
             self._log(f"\u25b6 Variation {i + 1}/{self.total}\u2026")
+
+            def _progress(chars, _i=i):
+                if self.cancelled:
+                    # Raising here aborts a streamed request at the next chunk
+                    raise Exception('Cancelled by user')
+                self._set_status(
+                    f"Variation {_i + 1}: {chars:,} chars received\u2026"
+                )
+
             try:
-                svg = self._gen_fn(i)
-                self.results.append((svg, None))
-                self._log(f"  \u2713 {len(svg)} chars received")
+                svg = self._gen_fn(i, _progress)
+                self.results[i] = (svg, None)
+                self._log(f"  \u2713 Variation {i + 1}: {len(svg)} chars received")
             except Exception as exc:
-                self.results.append((None, str(exc)))
-                self._log(f"  \u2717 {exc}")
+                self.results[i] = (None, str(exc))
+                if not self.cancelled:
+                    self._log(f"  \u2717 Variation {i + 1}: {exc}")
+
+        threads = []
+        for i in range(self.total):
+            t = threading.Thread(target=_run_one, args=(i,), daemon=True)
+            t.start()
+            threads.append(t)
+
+        # Wait for completion, but bail out promptly on cancel \u2014 the daemon
+        # threads are abandoned and terminate with the extension process.
+        for t in threads:
+            while t.is_alive():
+                t.join(0.2)
+                if self.cancelled:
+                    return
+        if self.cancelled:
+            return
         GLib.idle_add(self._finish_idle)
 
     def _finish_idle(self):
@@ -1771,8 +1759,9 @@ class GenerationProgressDialog(Gtk.Window):
             successful = [svg for svg, err in self.results if svg and not err]
             if successful:
                 self._copy_btn.show()
-                if _HAS_RSVG:
-                    self._preview_btn.show()
+                # SVGPreviewWindow renders via Rsvg or the GdkPixbuf SVG
+                # loader, and always offers the source tab — show it always.
+                self._preview_btn.show()
             self._cancel_btn.set_label("Close")
             # Quit the Gtk.main() loop directly — no extra idle needed
             Gtk.main_quit()

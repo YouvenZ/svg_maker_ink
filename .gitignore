@@ -1,7 +1,8 @@
 config.json
 svg_llm_history.json
+.svg_llm_history.json
 svg_llm_templates.json
 __pycache__/
 *.pyc
 PLAN.md
-fixe_file.md 
+fixe_file.md

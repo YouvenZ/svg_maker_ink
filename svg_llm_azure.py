@@ -5,36 +5,36 @@ Azure OpenAI provider for AI SVG Generator.
 Exposes:
   PROVIDER_ID, NAME, ENV_KEY, CONFIG_KEY, DEFAULT_MODELS,
   NEEDS_ENDPOINT, ENDPOINT_PLACEHOLDER, SUPPORTS_SEED
-  generate(prompt, system_prompt, opts, api_key, ssl_context) -> str
+  generate(prompt, system_prompt, opts, api_key, ssl_context,
+           progress_cb=None) -> str
   fetch_models(api_key, endpoint='', ssl_context=None) -> list[str]
 """
 
-import json
-import urllib.request
-import urllib.error
-import re
+from svg_llm_common import (
+    PROVIDERS, clean_svg_response, http_get_json, http_post_json,
+)
+from svg_llm_openai import build_chat_payload, stream_chat_text
 
 PROVIDER_ID = 'azure'
-NAME = 'Azure OpenAI'
-ENV_KEY = 'AZURE_OPENAI_API_KEY'
-CONFIG_KEY = 'azure_openai_api_key'
-DEFAULT_MODELS = [
-    'gpt-4o',
-    'gpt-4-turbo',
-    'gpt-35-turbo',
-]
+NAME = PROVIDERS['azure']['name']
+ENV_KEY = PROVIDERS['azure']['env_key']
+CONFIG_KEY = PROVIDERS['azure']['config_key']
+DEFAULT_MODELS = PROVIDERS['azure']['models']
 NEEDS_ENDPOINT = True
-ENDPOINT_PLACEHOLDER = 'https://your-resource.openai.azure.com'
+ENDPOINT_PLACEHOLDER = PROVIDERS['azure']['endpoint_placeholder']
 SUPPORTS_SEED = True
 
 _API_VERSION = '2024-08-01-preview'
 
 
-def generate(prompt: str, system_prompt: str, opts: dict, api_key: str, ssl_context) -> str:
+def generate(prompt: str, system_prompt: str, opts: dict, api_key: str,
+             ssl_context, progress_cb=None) -> str:
     """
     Call Azure OpenAI chat completions endpoint and return the raw response text.
 
-    opts keys used: model (deployment name), temperature, max_tokens, timeout, seed, endpoint
+    opts keys used: model (deployment name), temperature, max_tokens,
+    timeout, seed, endpoint
+    progress_cb(chars_received) enables streaming with live progress.
     """
     endpoint = (opts.get('endpoint') or '').rstrip('/')
     if not endpoint.startswith(('http://', 'https://')):
@@ -52,42 +52,28 @@ def generate(prompt: str, system_prompt: str, opts: dict, api_key: str, ssl_cont
         'Content-Type': 'application/json',
         'api-key': api_key,
     }
-    data: dict = {
-        'messages': [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user',   'content': prompt},
-        ],
-        'temperature': float(opts.get('temperature', 0.7)),
-        'max_tokens':  int(opts.get('max_tokens', 4000)),
-    }
-    seed = int(opts.get('seed', -1))
-    if seed >= 0:
-        data['seed'] = seed
+    timeout = int(opts.get('timeout', 60))
+    # Azure payload matches OpenAI chat/completions except that the model is
+    # addressed via the deployment URL — 'model' in the body is ignored.
+    data = build_chat_payload(deployment, system_prompt, prompt, opts,
+                              stream=bool(progress_cb))
+    data.pop('model', None)
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode('utf-8'),
-        headers=headers,
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=int(opts.get('timeout', 60)),
-                                    context=ssl_context) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            choices = result.get('choices', [])
-            if choices:
-                text = choices[0].get('message', {}).get('content', '').strip()
-                return _clean(text)
-            raise Exception('No content in Azure OpenAI response')
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        try:
-            msg = json.loads(body).get('error', {}).get('message', str(e))
-        except Exception:
-            msg = body[:300]
-        raise Exception(f'Azure OpenAI API error ({e.code}): {msg}')
-    except urllib.error.URLError as e:
-        raise Exception(f'Azure OpenAI network error: {e.reason}')
+    if progress_cb:
+        text = stream_chat_text(url, headers, data, timeout, ssl_context,
+                                'Azure OpenAI', progress_cb)
+        if text:
+            return clean_svg_response(text)
+        raise Exception('No content in Azure OpenAI streaming response')
+
+    result = http_post_json(url, headers, data, timeout, ssl_context,
+                            'Azure OpenAI')
+    choices = result.get('choices', [])
+    if choices:
+        text = choices[0].get('message', {}).get('content', '').strip()
+        if text:
+            return clean_svg_response(text)
+    raise Exception('No content in Azure OpenAI response')
 
 
 def fetch_models(api_key: str, endpoint: str = '', ssl_context=None) -> list:
@@ -98,21 +84,14 @@ def fetch_models(api_key: str, endpoint: str = '', ssl_context=None) -> list:
     if not endpoint:
         return DEFAULT_MODELS
     base = endpoint.rstrip('/')
-    url = f'{base}/openai/models?api-version={_API_VERSION}'
-    req = urllib.request.Request(url, headers={'api-key': api_key})
     try:
-        with urllib.request.urlopen(req, timeout=10, context=ssl_context) as resp:
-            data = json.loads(resp.read().decode())
+        data = http_get_json(
+            f'{base}/openai/models?api-version={_API_VERSION}',
+            {'api-key': api_key},
+            10, ssl_context,
+        )
         models = [m['id'] for m in data.get('value', data.get('data', []))
                   if m.get('id')]
         return models or DEFAULT_MODELS
     except Exception:
         return DEFAULT_MODELS
-
-
-def _clean(svg_code: str) -> str:
-    svg_code = re.sub(r'^```(?:svg|xml)?\s*\n?', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'\n?```\s*$', '', svg_code, flags=re.MULTILINE)
-    svg_code = re.sub(r'<\?xml[^>]+\?>\s*', '', svg_code)
-    svg_code = re.sub(r'<!DOCTYPE[^>]+>\s*', '', svg_code)
-    return svg_code.strip()
